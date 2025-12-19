@@ -29,7 +29,35 @@
 		EA9331712ECEB77100AD97A9 /* BoyfriendCameraUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BoyfriendCameraUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		EA8604332EF60492001E427E /* Exceptions for "Brain" folder in "BoyfriendCameraTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				LocationManager.swift,
+				SunCalculator.swift,
+			);
+			target = EA9331662ECEB77100AD97A9 /* BoyfriendCameraTests */;
+		};
+		EA8604342EF60492001E427E /* Exceptions for "Brain" folder in "BoyfriendCameraUITests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				LocationManager.swift,
+				SunCalculator.swift,
+			);
+			target = EA9331702ECEB77100AD97A9 /* BoyfriendCameraUITests */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		EA86042C2EF60303001E427E /* Brain */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				EA8604332EF60492001E427E /* Exceptions for "Brain" folder in "BoyfriendCameraTests" target */,
+				EA8604342EF60492001E427E /* Exceptions for "Brain" folder in "BoyfriendCameraUITests" target */,
+			);
+			path = Brain;
+			sourceTree = "<group>";
+		};
 		EA93315C2ECEB76F00AD97A9 /* BoyfriendCamera */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = BoyfriendCamera;
@@ -79,6 +107,7 @@
 				EA93316A2ECEB77100AD97A9 /* BoyfriendCameraTests */,
 				EA9331742ECEB77100AD97A9 /* BoyfriendCameraUITests */,
 				EA93315B2ECEB76F00AD97A9 /* Products */,
+				EA86042C2EF60303001E427E /* Brain */,
 			);
 			sourceTree = "<group>";
 		};
@@ -108,6 +137,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				EA86042C2EF60303001E427E /* Brain */,
 				EA93315C2ECEB76F00AD97A9 /* BoyfriendCamera */,
 			);
 			name = BoyfriendCamera;
@@ -399,6 +429,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "To help you frame photos.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to calculate the sun's position.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -444,6 +475,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "To help you frame photos.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to calculate the sun's position.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
