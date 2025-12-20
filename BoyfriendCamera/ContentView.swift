@@ -26,13 +26,16 @@ struct ContentView: View {
     @State var currentAdvice: DirectorAdvice?
     @State private var showMap = false
     
-    // NEW: UI States for your requested features
+    // UI States
     @State private var currentAspectRatio: AspectRatio = .fourThree
     @State private var currentZoom: CGFloat = 1.0
     @State private var selectedPresetIndex: Int = 0
     @State private var showFlashAnimation = false
     @State private var isCapturing = false
     @State private var ellipsisStep = 0
+    
+    // Zoom Gesture State
+    @State private var baseZoomFactor: CGFloat = 1.0
     
     // Target: The Campanile (Change to test!)
     @State var targetLandmark = Landmark(
@@ -53,7 +56,7 @@ struct ContentView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 
-                // --- LAYER 1: CAMERA (With Aspect Ratio) ---
+                // --- LAYER 1: CAMERA (With Aspect Ratio & Pinch Zoom) ---
                 GeometryReader { geo in
                     let ratio = currentAspectRatio.value
                     let height = geo.size.width * ratio
@@ -62,6 +65,19 @@ struct ContentView: View {
                         .frame(width: geo.size.width, height: height)
                         .clipped()
                         .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                        // PINCH TO ZOOM GESTURE
+                        .gesture(
+                            MagnificationGesture()
+                                .onChanged { val in
+                                    let newZoom = baseZoomFactor * val
+                                    cameraManager.zoom(factor: newZoom)
+                                    // Update UI slider immediately
+                                    currentZoom = max(cameraManager.minZoomFactor, min(newZoom, cameraManager.maxZoomFactor))
+                                }
+                                .onEnded { _ in
+                                    baseZoomFactor = currentZoom
+                                }
+                        )
                 }
                 .ignoresSafeArea(.all, edges: .top)
                 
@@ -98,6 +114,7 @@ struct ContentView: View {
                         Button {
                             cameraManager.switchCamera()
                             currentZoom = 1.0 // Reset zoom
+                            baseZoomFactor = 1.0
                         } label: {
                             Image(systemName: "camera.rotate.fill")
                                 .font(.headline).foregroundColor(.white)
@@ -120,29 +137,17 @@ struct ContentView: View {
                         
                         Spacer(minLength: 8)
                         
-                        // Zoom Controls (device-aware, transparent, scroll between scales)
+                        // Zoom Controls
                         VStack(spacing: 8) {
-                            // Removed scrollable TabView here
-                            
-                            // Also keep quick-tap buttons for direct jumps (optional)
                             HStack(spacing: 24) {
                                 let epsilon: CGFloat = 0.001
-                                // Canonical stops we want to show in order
-                                let canonical: [CGFloat] = [0.5, 1.0, 2.0, 4.0, 8.0]
-                                let presets = canonical.filter { $0 >= cameraManager.minZoomFactor - epsilon && $0 <= cameraManager.maxZoomFactor + epsilon }
+                                let presets = cameraManager.suggestedZoomPresets
                                 
                                 ForEach(presets, id: \.self) { preset in
-                                    let labelText: String = {
-                                        if abs(preset - 0.5) < 0.001 { return ".5x" }
-                                        if abs(preset.rounded() - preset) < 0.001 { return String(format: "%.0fx", preset) }
-                                        return String(format: "%.1fx", preset)
-                                    }()
-                                    ZoomButton(label: labelText, factor: preset, currentZoom: $currentZoom, action: { value in
+                                    ZoomButton(label: labelForPreset(preset), factor: preset, currentZoom: $currentZoom, action: { value in
                                         selectionHaptic()
                                         cameraManager.zoom(factor: value)
-                                        if let idx = presets.firstIndex(of: value) {
-                                            selectedPresetIndex = idx
-                                        }
+                                        baseZoomFactor = value // Update base for pinch
                                     })
                                 }
                             }
@@ -153,14 +158,12 @@ struct ContentView: View {
                                     selectedPresetIndex = idx
                                 }
                             }
+                            // Reset base zoom if presets change (e.g. lens switch)
                             .onChange(of: cameraManager.suggestedZoomPresets) { _, newPresets in
-                                // If current zoom isn't close to any preset, snap to nearest available
                                 guard !newPresets.isEmpty else { return }
                                 if let nearest = newPresets.min(by: { abs($0 - currentZoom) < abs($1 - currentZoom) }) {
                                     currentZoom = nearest
-                                }
-                                if let idx = newPresets.firstIndex(of: currentZoom) {
-                                    selectedPresetIndex = idx
+                                    baseZoomFactor = nearest
                                 }
                             }
                         }
@@ -186,35 +189,27 @@ struct ContentView: View {
                                 takePhoto()
                             } label: {
                                 ZStack {
-                                    // Outer liquid-glass ring
                                     Circle()
                                         .fill(.ultraThinMaterial)
                                         .frame(width: 78, height: 78)
                                         .overlay(
-                                            Circle()
-                                                .stroke(Color.white.opacity(0.6), lineWidth: 1)
+                                            Circle().stroke(Color.white.opacity(0.6), lineWidth: 1)
                                         )
                                         .shadow(color: Color.black.opacity(0.25), radius: 6, x: 0, y: 3)
                                         .overlay(
-                                            // Soft highlight at the top for glass sheen
-                                            Circle()
-                                                .stroke(LinearGradient(
-                                                    colors: [Color.white.opacity(0.45), Color.white.opacity(0.1)],
-                                                    startPoint: .top,
-                                                    endPoint: .bottom
-                                                ), lineWidth: 2)
-                                                .blur(radius: 0.5)
+                                            Circle().stroke(LinearGradient(
+                                                colors: [Color.white.opacity(0.45), Color.white.opacity(0.1)],
+                                                startPoint: .top,
+                                                endPoint: .bottom
+                                            ), lineWidth: 2).blur(radius: 0.5)
                                         )
-                                    // Inner white fill
-                                    Circle()
-                                        .fill(Color.white)
-                                        .frame(width: 64, height: 64)
+                                    Circle().fill(Color.white).frame(width: 64, height: 64)
                                 }
                             }
                             
                             Spacer()
                             
-                            // Placeholder (keeps shutter centered)
+                            // Placeholder
                             Color.clear.frame(width: 60, height: 60)
                         }
                         .padding(.horizontal, 30).padding(.bottom, 30)
@@ -233,7 +228,6 @@ struct ContentView: View {
                         .transition(.opacity)
                         .zIndex(150)
                         .onAppear {
-                            // Animate the dots every 0.4s
                             Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { timer in
                                 if !isCapturing {
                                     timer.invalidate()
@@ -255,17 +249,7 @@ struct ContentView: View {
                 }
             }
             .onAppear {
-                // Request initial zoom to 1× in UI; CameraManager also tries to set 1×
                 currentZoom = 1.0
-            }
-            .onChange(of: cameraManager.permissionGranted) { _, granted in
-                guard granted else { return }
-                // Apply 1× on permission to keep UI and camera aligned
-                currentZoom = 1.0
-                cameraManager.zoom(factor: 1.0)
-                if let idx = cameraManager.suggestedZoomPresets.firstIndex(of: 1.0) {
-                    selectedPresetIndex = idx
-                }
             }
         }
     }
@@ -278,7 +262,6 @@ struct ContentView: View {
     }
     
     // MARK: - Logic
-    
     func toggleAspectRatio() {
         let allCases = AspectRatio.allCases
         if let currentIndex = allCases.firstIndex(of: currentAspectRatio) {
@@ -289,13 +272,10 @@ struct ContentView: View {
     
     func takePhoto() {
         isCapturing = true
-        // 1. Flash Animation
         withAnimation(.easeOut(duration: 0.1)) { showFlashAnimation = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             withAnimation(.easeIn(duration: 0.2)) { showFlashAnimation = false }
         }
-        
-        // 2. Call Manager (Pass location!)
         cameraManager.capturePhoto(location: locationManager.location)
     }
     
@@ -316,25 +296,19 @@ struct ContentView: View {
         withAnimation(.linear(duration: 0.1)) { self.currentAdvice = newAdvice }
     }
     
-    // Helper for preset labels updated to use multiplication sign
     func labelForPreset(_ preset: CGFloat) -> String {
-        // Find the best matching preset from suggestedZoomPresets close to given preset
         guard let best = cameraManager.suggestedZoomPresets.min(by: { abs($0 - preset) < abs($1 - preset) }) else {
             let whole = abs(preset.rounded() - preset) < 0.001
             return whole ? String(format: "%.0f×", preset) : String(format: "%.1f×", preset)
         }
         
-        var xLabel: String
-        
-        if abs(best - 1.0) < 0.001 { xLabel = "1×" }
-        else if abs(best - 0.5) < 0.001 { xLabel = "0.5×" }
-        else if abs(best - 2.0) < 0.001 { xLabel = "2×" }
-        else if abs(best - 3.0) < 0.001 { xLabel = "3×" }
+        if abs(best - 1.0) < 0.001 { return "1×" }
+        else if abs(best - 0.5) < 0.001 { return "0.5×" }
+        else if abs(best - 2.0) < 0.001 { return "2×" }
+        else if abs(best - 3.0) < 0.001 { return "3×" }
         else {
-            xLabel = String(format: "%.1f×", preset)
+            return String(format: "%.1f×", preset)
         }
-        
-        return xLabel
     }
 }
 

@@ -1,56 +1,94 @@
 #if canImport(UIKit)
-
-//
-//  CameraPreview.swift
-//  BoyfriendCamera
-//
-//  Created by 柯杰 on 11/19/25.
-//
-
 import Foundation
 import SwiftUI
 import AVFoundation
 import UIKit
 
 struct CameraPreview: UIViewRepresentable {
-    // We pass the "Manager" into this view so it knows what to show
     @ObservedObject var cameraManager: CameraManager
 
-    func makeUIView(context: Context) -> UIView {
-        // 1. Create a blank standard View
-        let view = UIView(frame: UIScreen.main.bounds)
-
-        // 2. Create the layer that actually shows the video
-        let previewLayer = AVCaptureVideoPreviewLayer(session: cameraManager.session)
+    func makeUIView(context: Context) -> CameraPreviewView {
+        let view = CameraPreviewView()
+        view.session = cameraManager.session
         
-        // 3. Configure it to fill the whole screen
-        previewLayer.frame = view.frame
-        previewLayer.videoGravity = .resizeAspectFill
-
-        // 4. Add the layer to the view
-        view.layer.addSublayer(previewLayer)
-
+        // 1. Tap to Focus
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        view.addGestureRecognizer(tapGesture)
+        
+        // 2. Hold to Lock AE/AF
+        let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
+        view.addGestureRecognizer(longPress)
+        
         return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-        // This function updates the view if data changes, but we don't need it for a simple camera feed yet.
+    func updateUIView(_ uiView: CameraPreviewView, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    // The Bridge between UIKit gestures and SwiftUI Manager
+    class Coordinator: NSObject {
+        var parent: CameraPreview
+        
+        init(_ parent: CameraPreview) {
+            self.parent = parent
+        }
+        
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard let view = gesture.view as? CameraPreviewView else { return }
+            let location = gesture.location(in: view)
+            
+            // Convert screen touch to Camera Focus Point (0.0 to 1.0)
+            let capturePoint = view.videoPreviewLayer.captureDevicePointConverted(fromLayerPoint: location)
+            
+            // Visual Haptic
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+            
+            // Call Manager
+            parent.cameraManager.setFocus(point: capturePoint)
+            
+            // Optional: You could draw a box here using a UIView overlay, but keeping it simple for now.
+        }
+        
+        @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+            if gesture.state == .began {
+                let generator = UINotificationFeedbackGenerator()
+                generator.notificationOccurred(.success)
+                parent.cameraManager.lockFocusAndExposure()
+            }
+        }
     }
 }
+
+// Wrapper to expose the PreviewLayer for coordinate conversion
+class CameraPreviewView: UIView {
+    var videoPreviewLayer: AVCaptureVideoPreviewLayer {
+        return layer as! AVCaptureVideoPreviewLayer
+    }
+    
+    var session: AVCaptureSession? {
+        get { return videoPreviewLayer.session }
+        set { videoPreviewLayer.session = newValue }
+    }
+    
+    override class var layerClass: AnyClass {
+        return AVCaptureVideoPreviewLayer.self
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        videoPreviewLayer.frame = bounds
+        videoPreviewLayer.videoGravity = .resizeAspectFill
+    }
+}
+
 #else
-
 import SwiftUI
-import AVFoundation
-
 struct CameraPreview: View {
     @ObservedObject var cameraManager: CameraManager
-
-    var body: some View {
-        Text("Camera preview is not available on this platform.")
-            .multilineTextAlignment(.center)
-            .padding()
-    }
+    var body: some View { Text("Camera preview unavailable") }
 }
-
 #endif
-
