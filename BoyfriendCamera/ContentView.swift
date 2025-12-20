@@ -79,6 +79,16 @@ struct ContentView: View {
                         .padding(.bottom, 50).padding(.trailing, 30)
                     }
                 }
+                VStack{
+                    Button {
+                        cameraManager.capturePhoto(location: locationManager.location)
+                    } label: {
+                        Image(systemName: "camera.circle.fill")
+                            .font(.system(size: 52))
+                            .foregroundColor(.white)
+                    }
+                }
+                
                 
                 // Layer 5: Calibration
                 if locationManager.isInterferenceHigh {
