@@ -2,96 +2,169 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
-// A simple data model for the pin
-struct MapLandmark: Identifiable {
+// 1. Data Model (Now equatable so we can detect changes)
+struct MapLandmark: Identifiable, Equatable {
     let id = UUID()
-    let name: String
-    let coordinate: CLLocationCoordinate2D
+    var name: String
+    var coordinate: CLLocationCoordinate2D
+    
+    static func == (lhs: MapLandmark, rhs: MapLandmark) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 struct MapScreen: View {
     @ObservedObject var locationManager: LocationManager
-    let landmark: MapLandmark
+    
+    // 2. BINDING: This lets the Map update the "Target" in ContentView
+    @Binding var landmark: MapLandmark
 
-    // 1. CONTROL THE CAMERA
-    // ".userLocation(fallback: .automatic)" makes it follow you immediately
-    @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
+    // Map State
+    @State private var position: MapCameraPosition = .automatic
+    @State private var isSatellite = true
+    
+    // Search State
+    @State private var searchText = ""
+    @State private var searchResults: [MKMapItem] = []
+    @State private var isSearching = false
 
     var body: some View {
         ZStack {
-            // 2. THE MODERN MAP
+            // --- THE MAP ---
             Map(position: $position) {
-                
-                // Draw the User (The Blue Dot)
                 UserAnnotation()
                 
-                // Draw the Target (Red Pin)
+                // The Target Pin
                 Annotation(landmark.name, coordinate: landmark.coordinate) {
                     ZStack {
-                        Circle()
-                            .fill(.red)
-                            .frame(width: 20, height: 20)
-                            .shadow(radius: 5)
-                        
-                        Image(systemName: "camera.fill")
-                            .font(.caption2)
-                            .foregroundColor(.white)
+                        Circle().fill(.red).frame(width: 20, height: 20).shadow(radius: 5)
+                        Image(systemName: "camera.fill").font(.caption2).foregroundColor(.white)
                     }
                 }
             }
-            // 3. ENABLE "GOOGLE EARTH" MODE
-            // .hybrid = Satellite + Roads
-            // elevation: .realistic = 3D Hills/Buildings
-            .mapStyle(.hybrid(elevation: .realistic))
-            
-            // 4. ADD STANDARD CONTROLS (Compass, GPS Button)
-            .mapControls {
-                MapUserLocationButton()
-                MapCompass()
-                MapScaleView()
-                MapPitchToggle() // Allows 3D tilting
+            .mapStyle(isSatellite ? .hybrid(elevation: .realistic) : .standard(elevation: .realistic))
+            .onAppear {
+                // Auto-fit when we open the map
+                fitBothLocations()
             }
             
-            // 5. DISTANCE OVERLAY
+            // --- TOP RIGHT SATELLITE TOGGLE ---
             VStack {
                 HStack {
-                    Image(systemName: "location.fill")
-                        .foregroundColor(.yellow)
-                    
-                    if let userLoc = locationManager.location {
-                        let distance = userLoc.distance(from: CLLocation(latitude: landmark.coordinate.latitude, longitude: landmark.coordinate.longitude))
-                        Text("Distance: \(Int(distance))m")
-                            .font(.headline)
-                            .bold()
+                    Spacer()
+                    Button {
+                        withAnimation { isSatellite.toggle() }
+                    } label: {
+                        Image(systemName: isSatellite ? "globe.americas.fill" : "map.fill")
+                            .font(.title2)
                             .foregroundColor(.white)
-                    } else {
-                        Text("Locating...")
-                            .foregroundColor(.white)
+                            .padding(10)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Circle())
+                            .shadow(radius: 3)
                     }
+                    .padding(.top, 10) // Adjust for notch if needed
+                    .padding(.trailing, 10)
+                }
+                Spacer()
+            }
+            
+            // --- SEARCH RESULTS LIST (Appears when typing) ---
+            if !searchResults.isEmpty && isSearching {
+                VStack {
+                    List(searchResults, id: \.self) { item in
+                        Button {
+                            selectNewTarget(item)
+                        } label: {
+                            HStack {
+                                Image(systemName: "mappin.circle.fill").foregroundColor(.red)
+                                VStack(alignment: .leading) {
+                                    Text(item.name ?? "Unknown").font(.headline)
+                                    Text(item.placemark.title ?? "").font(.caption).foregroundColor(.gray)
+                                }
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(15)
+                    .frame(maxHeight: 300)
+                    .padding()
+                    .shadow(radius: 10)
                     
                     Spacer()
                 }
-                .padding()
-                .background(.ultraThinMaterial)
-                .cornerRadius(15)
-                .padding()
-                
-                Spacer()
+                .padding(.top, 50) // Push down below search bar
             }
         }
         .navigationTitle(landmark.name)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            // Force the compass to start updating so the map rotates
-            locationManager.startUpdates()
+        // --- NATIVE SEARCH BAR ---
+        .searchable(text: $searchText, isPresented: $isSearching, prompt: "Search for new target...")
+        .onChange(of: searchText) { _ in
+            performSearch()
         }
     }
-}
-
-#Preview {
-    // Dummy preview data
-    MapScreen(
-        locationManager: LocationManager(),
-        landmark: MapLandmark(name: "Test Target", coordinate: CLLocationCoordinate2D(latitude: 37.8720, longitude: -122.2578))
-    )
+    
+    // MARK: - Logic Helpers
+    
+    func fitBothLocations() {
+        guard let userLoc = locationManager.location else { return }
+        
+        let userCoord = userLoc.coordinate
+        let targetCoord = landmark.coordinate
+        
+        // Calculate the bounding box
+        let minLat = min(userCoord.latitude, targetCoord.latitude)
+        let maxLat = max(userCoord.latitude, targetCoord.latitude)
+        let minLon = min(userCoord.longitude, targetCoord.longitude)
+        let maxLon = max(userCoord.longitude, targetCoord.longitude)
+        
+        // Add some padding (multiply span by 1.4)
+        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat)/2, longitude: (minLon + maxLon)/2)
+        let span = MKCoordinateSpan(
+            latitudeDelta: abs(maxLat - minLat) * 1.4,
+            longitudeDelta: abs(maxLon - minLon) * 1.4
+        )
+        
+        // Smoothly fly to this new region
+        withAnimation {
+            position = .region(MKCoordinateRegion(center: center, span: span))
+        }
+    }
+    
+    func performSearch() {
+        guard !searchText.isEmpty else {
+            searchResults = []
+            return
+        }
+        
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = searchText
+        // Search near the current target
+        request.region = MKCoordinateRegion(center: landmark.coordinate, latitudinalMeters: 50000, longitudinalMeters: 50000)
+        
+        let search = MKLocalSearch(request: request)
+        search.start { response, error in
+            if let items = response?.mapItems {
+                self.searchResults = items
+            }
+        }
+    }
+    
+    func selectNewTarget(_ item: MKMapItem) {
+        // 1. Update the Target (This updates ContentView automatically!)
+        landmark = MapLandmark(
+            name: item.name ?? "New Target",
+            coordinate: item.placemark.coordinate
+        )
+        
+        // 2. Clear Search
+        searchText = ""
+        isSearching = false
+        searchResults = []
+        
+        // 3. Re-fit the map
+        fitBothLocations()
+    }
 }

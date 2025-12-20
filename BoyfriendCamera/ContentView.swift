@@ -2,39 +2,41 @@ import SwiftUI
 import CoreLocation
 
 struct ContentView: View {
-    // 1. Initialize Engines
     @StateObject var cameraManager = CameraManager()
     @StateObject var locationManager = LocationManager()
-    
-    // Smoothing Engine
     let smoother = CompassSmoother()
     
-    // UI State
     @State var currentAdvice: DirectorAdvice?
     @State private var showMap = false
     
-    // 🎯 TARGET: The Campanile at UC Berkeley
-    let targetLandmark = Landmark(
+    // --- CHANGE 1: This is now @State so it can change! ---
+    @State var targetLandmark = Landmark(
         name: "The Campanile",
         coordinate: CLLocationCoordinate2D(latitude: 37.8720, longitude: -122.2578)
     )
     
-    // Helper to convert data for the Map Screen
-    var targetLandmarkForMap: MapLandmark {
-        MapLandmark(
-            name: targetLandmark.name,
-            coordinate: targetLandmark.coordinate
+    // Helper to sync data with the Map
+    // We bind directly to the State now
+    var targetLandmarkBinding: Binding<MapLandmark> {
+        Binding(
+            get: {
+                MapLandmark(name: targetLandmark.name, coordinate: targetLandmark.coordinate)
+            },
+            set: { newMapLandmark in
+                // When Map updates, we update our main target
+                targetLandmark = Landmark(name: newMapLandmark.name, coordinate: newMapLandmark.coordinate)
+            }
         )
     }
     
     var body: some View {
         NavigationStack {
             ZStack {
-                // Layer 1: Camera Feed
+                // Layer 1: Camera
                 CameraPreview(cameraManager: cameraManager)
                     .ignoresSafeArea()
                 
-                // Layer 2: Floating Target Box
+                // Layer 2: Floating Box
                 if let advice = currentAdvice {
                     FloatingTargetView(
                         angleDiff: advice.turnAngle,
@@ -44,74 +46,54 @@ struct ContentView: View {
                 
                 // Layer 3: HUD
                 VStack {
-                    // Top Status Bar
                     HStack {
-                        Circle()
-                            .fill(locationManager.permissionGranted ? Color.green : Color.red)
-                            .frame(width: 8, height: 8)
+                        Circle().fill(locationManager.permissionGranted ? Color.green : Color.red).frame(width: 8, height: 8)
                         Text(locationManager.permissionGranted ? "GPS ONLINE" : "OFFLINE")
                             .font(.caption2).bold().foregroundColor(.white)
                             .padding(4).background(.ultraThinMaterial).cornerRadius(4)
                         Spacer()
                     }
-                    .padding(.top, 50)
-                    .padding(.horizontal)
+                    .padding(.top, 50).padding(.horizontal)
                     
                     Spacer()
                     
-                    // Bottom Scope
+                    // Scope
                     if let advice = currentAdvice {
-                        ScopeView(advice: advice)
-                            .padding(.bottom, 50)
+                        ScopeView(advice: advice).padding(.bottom, 50)
                     } else {
-                        Text("Calibrating Sensors...")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .padding()
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(15)
-                            .padding(.bottom, 50)
+                        Text("Calibrating...").font(.headline).foregroundColor(.white).padding().background(.ultraThinMaterial).cornerRadius(15).padding(.bottom, 50)
                     }
                 }
                 
-                // Layer 4: Map Button (Bottom Right)
+                // Layer 4: Map Button
                 VStack {
                     Spacer()
                     HStack {
                         Spacer()
-                        Button {
-                            showMap = true
-                        } label: {
+                        Button { showMap = true } label: {
                             Image(systemName: "map.fill")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                                .padding(15)
-                                .background(.ultraThinMaterial)
-                                .clipShape(Circle())
+                                .font(.title2).foregroundColor(.white).padding(15)
+                                .background(.ultraThinMaterial).clipShape(Circle())
                                 .overlay(Circle().stroke(.white.opacity(0.5), lineWidth: 1))
                         }
-                        .padding(.bottom, 50)
-                        .padding(.trailing, 30)
+                        .padding(.bottom, 50).padding(.trailing, 30)
                     }
                 }
                 
-                // Layer 5: Calibration Overlay
+                // Layer 5: Calibration
                 if locationManager.isInterferenceHigh {
-                    CalibrationView()
-                        .transition(.opacity)
-                        .zIndex(100)
+                    CalibrationView().transition(.opacity).zIndex(100)
                 }
             }
+            // --- CHANGE 2: Pass the Binding ($) ---
             .navigationDestination(isPresented: $showMap) {
-                MapScreen(locationManager: locationManager, landmark: targetLandmarkForMap)
+                MapScreen(locationManager: locationManager, landmark: targetLandmarkBinding)
             }
-            // Reactive Logic
             .onReceive(locationManager.$heading) { _ in updateNavigationLogic() }
             .onReceive(locationManager.$location) { _ in updateNavigationLogic() }
         }
     }
     
-    // The Brain Function
     func updateNavigationLogic() {
         guard let userLoc = locationManager.location,
               let rawHeading = locationManager.heading?.trueHeading else { return }
@@ -124,15 +106,8 @@ struct ContentView: View {
             target: targetLandmark
         )
         
-        // Magnetic Snap
         if abs(newAdvice.turnAngle) < 3 {
-            newAdvice = DirectorAdvice(
-                message: newAdvice.message,
-                icon: newAdvice.icon,
-                isUrgent: newAdvice.isUrgent,
-                lightingScore: newAdvice.lightingScore,
-                turnAngle: 0
-            )
+            newAdvice = DirectorAdvice(message: newAdvice.message, icon: newAdvice.icon, isUrgent: newAdvice.isUrgent, lightingScore: newAdvice.lightingScore, turnAngle: 0)
         }
         
         withAnimation(.linear(duration: 0.1)) {
