@@ -22,6 +22,16 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         case tele
     }
     private var preferredLens: BackLens = .wide
+    
+    // Smooth zoom control
+    private let zoomRampRate: Float = 8.0 // higher = faster
+    private let handoffDownThreshold: CGFloat = 0.85 // when going down, start handoff near 0.85
+    private let handoffUpThreshold: CGFloat = 0.65   // when going up from 0.5, finish handoff after 0.65
+    private var isSwitchingLens = false
+
+    // Telephoto boundaries (UI factors) derived from hardware switch-over; filled in setup
+    private var telephotoThresholds: [CGFloat] = [] // e.g., [3.0, 5.0]
+    private let teleHandoffPadding: CGFloat = 0.2    // hysteresis around thresholds
 
     // LENS SCALING
     // Native 1.0 is often the UltraWide (0.5x). This scaler fixes that.
@@ -54,31 +64,101 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     
     func setZoom(_ uiFactor: CGFloat) {
         sessionQueue.async {
+            // If we are in the middle of a lens switch, ignore new requests briefly
+            if self.isSwitchingLens { return }
             guard let device = self.activeDevice else { return }
-            
-            // Auto lens handoff based on UI factor thresholds
-            if uiFactor <= 0.6 && self.preferredLens != .ultraWide {
-                DispatchQueue.main.async { /* avoid recursive contention */ }
-                self.switchToUltraWideIfAvailable()
-            } else if uiFactor >= 0.9 && self.preferredLens == .ultraWide {
-                self.switchToWideIfAvailable(targetUIZoom: max(1.0, uiFactor))
+
+            var targetUI = max(0.5, uiFactor)
+
+            // Telephoto handoff logic
+            if let tele = self.telephotoTarget(for: targetUI) {
+                if tele.shouldSwitch {
+                    self.isSwitchingLens = true
+                    switch tele.targetLens {
+                    case .tele:
+                        self.switchToTelephotoIfAvailable(targetUIZoom: tele.snapUI)
+                    case .wide:
+                        self.switchToWideIfAvailable(targetUIZoom: tele.snapUI)
+                    default: break
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+                        self.sessionQueue.async { self.isSwitchingLens = false }
+                    }
+                    return
+                }
             }
-            
-            // Convert UI Zoom -> Native Zoom
-            // Example: UI 1.0 * Scaler 2.0 = Native 2.0
-            let nativeFactor = uiFactor * self.zoomScaler
-            
+
+            // Smooth lens handoff with hysteresis around ~0.75x
+            switch self.preferredLens {
+            case .wide:
+                // If user drags below handoffDownThreshold, first ramp wide to ~0.9 native, then switch
+                if targetUI <= self.handoffDownThreshold {
+                    self.isSwitchingLens = true
+                    // 1) Ramp current lens close to its minimum for a smoother visual before switch
+                    do {
+                        try device.lockForConfiguration()
+                        let preSwitchNative = max(device.minAvailableVideoZoomFactor, min(0.95 * self.zoomScaler, device.maxAvailableVideoZoomFactor))
+                        device.ramp(toVideoZoomFactor: preSwitchNative, withRate: self.zoomRampRate)
+                        device.unlockForConfiguration()
+                    } catch {
+                        print("Pre-switch ramp error: \(error)")
+                    }
+                    // 2) Switch to ultra-wide and ramp to 0.5 smoothly
+                    self.switchToUltraWideIfAvailable()
+                    // Small delay to allow input reconfiguration, then set 0.5
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+                        self.sessionQueue.async {
+                            self.isSwitchingLens = false
+                            self.setZoom(0.5)
+                        }
+                    }
+                    return
+                }
+            case .ultraWide:
+                // If user drags above handoffUpThreshold, switch back to wide at ~1.0 smoothly
+                if targetUI >= self.handoffUpThreshold {
+                    self.isSwitchingLens = true
+                    self.switchToWideIfAvailable(targetUIZoom: max(1.0, targetUI))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+                        self.sessionQueue.async { self.isSwitchingLens = false }
+                    }
+                    return
+                }
+            default:
+                break
+            }
+
+            // Continuous ramp on the current active device
+            let nativeFactor = targetUI * self.zoomScaler
             do {
                 try device.lockForConfiguration()
                 let clamped = max(device.minAvailableVideoZoomFactor, min(nativeFactor, device.maxAvailableVideoZoomFactor))
-                device.ramp(toVideoZoomFactor: clamped, withRate: 5.0)
+                device.ramp(toVideoZoomFactor: clamped, withRate: self.zoomRampRate)
                 device.unlockForConfiguration()
-                
-                DispatchQueue.main.async { self.currentZoomFactor = uiFactor }
+                DispatchQueue.main.async { self.currentZoomFactor = targetUI }
             } catch {
                 print("Zoom error: \(error)")
             }
         }
+    }
+
+    // Decide if we should switch to telephoto for a target UI zoom
+    private func telephotoTarget(for ui: CGFloat) -> (shouldSwitch: Bool, targetLens: BackLens, snapUI: CGFloat)? {
+        guard !telephotoThresholds.isEmpty else { return nil }
+        // Sort ascending thresholds like [3.0, 5.0]
+        let thresholds = telephotoThresholds.sorted()
+        if preferredLens == .tele {
+            // If we are tele and user drags below the lowest threshold - padding, switch back to wide
+            if ui < (thresholds.first! - teleHandoffPadding) { return (true, .wide, max(1.0, ui)) }
+            return (false, .tele, ui)
+        } else if preferredLens == .wide || preferredLens == .ultraWide {
+            // If user goes above any threshold + padding, switch to tele and snap near that threshold
+            for t in thresholds.reversed() {
+                if ui > (t + teleHandoffPadding) { return (true, .tele, t) }
+            }
+            return (false, preferredLens, ui)
+        }
+        return nil
     }
 
     // MARK: - CAPTURE LOGIC (With Cropping)
@@ -221,30 +301,22 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         self.zoomScaler = 1.0
         
         // 3. Detect Lens Switch Points (To find 3x vs 5x)
-        var buttons: [CGFloat] = []
-        
-        // Always have 0.5 if supported, and 1.0 (Main)
-        if self.zoomScaler > 1.5 { buttons.append(0.5) }
-        buttons.append(1.0)
-        
-        // Now ask the hardware: "At what zoom factors do you switch lenses?"
-        // These are Native factors. We need to divide by scaler to get UI factors.
         let switchOverFactors = selected.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat(truncating: $0) }
         
+        telephotoThresholds.removeAll()
         for nativeFactor in switchOverFactors {
             let uiFactor = nativeFactor / self.zoomScaler
-            // Filter out tiny macro switches, look for big jumps (Telephoto)
             if uiFactor > 1.2 {
-                // Round to nearest integer (e.g. 2.98 -> 3.0)
-                let cleanFactor = round(uiFactor)
-                buttons.append(cleanFactor)
+                let clean = round(uiFactor)
+                telephotoThresholds.append(clean)
             }
         }
-        
-        // Add 2x as a digital crop preset if not present (Apple does this on 48MP sensors)
-        if !buttons.contains(2.0) && buttons.contains(1.0) {
-            buttons.append(2.0)
-        }
+        // Build buttons from thresholds
+        var buttons: [CGFloat] = []
+        if self.zoomScaler > 1.5 { buttons.append(0.5) }
+        buttons.append(1.0)
+        for t in telephotoThresholds.sorted() { if !buttons.contains(t) { buttons.append(t) } }
+        if !buttons.contains(2.0) && buttons.contains(1.0) { buttons.append(2.0) }
         
         // Sort
         DispatchQueue.main.async {
@@ -301,6 +373,19 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
             self.switchToDevice(wide, lens: .wide, uiZoom: targetUIZoom, scaler: 1.0)
         }
     }
+    
+    func switchToTelephotoIfAvailable(targetUIZoom: CGFloat) {
+        sessionQueue.async {
+            let deviceTypes: [AVCaptureDevice.DeviceType] = [
+                .builtInTelephotoCamera,
+                .builtInTripleCamera
+            ]
+            let discovery = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes, mediaType: .video, position: .back)
+            guard let tele = discovery.devices.first(where: { $0.deviceType == .builtInTelephotoCamera }) ?? discovery.devices.first else { return }
+            // For telephoto, UI scale should map so that threshold (e.g., 3x/5x) feels native. Use scaler = 1.0 for UI mapping continuity
+            self.switchToDevice(tele, lens: .tele, uiZoom: targetUIZoom, scaler: 1.0)
+        }
+    }
 
     private func switchToDevice(_ newDevice: AVCaptureDevice, lens: BackLens, uiZoom: CGFloat, scaler: CGFloat) {
         session.beginConfiguration()
@@ -317,12 +402,14 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
             print("Switch input error: \(error)")
         }
         session.commitConfiguration()
-        // Update max/min and apply desired UI zoom
+        // Update max/min and apply desired UI zoom after a tiny delay to let the session settle
         DispatchQueue.main.async {
             self.minZoomFactor = 0.5
             self.maxZoomFactor = newDevice.maxAvailableVideoZoomFactor / max(self.zoomScaler, 0.001)
         }
-        self.setZoom(uiZoom)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            self.setZoom(uiZoom)
+        }
     }
     
     // ... (Boilerplate Permissions/Vision logic same as before) ...

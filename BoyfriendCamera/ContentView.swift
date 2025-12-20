@@ -75,6 +75,10 @@ struct ContentView: View {
     @State private var isCapturing = false
     @State private var isZoomDialVisible = false
     
+    // Added state for zoom dial presentation and haptic tracking
+    @State private var isZoomDialPresented = false
+    @State private var lastHapticTick: CGFloat = -1
+    
     // UI State
     @State private var currentAspectRatio: AspectRatio = .fourThree
     
@@ -204,7 +208,7 @@ struct ContentView: View {
                                 .buttonStyle(.plain)
                                 .simultaneousGesture(
                                     LongPressGesture().onEnded { _ in
-                                        withAnimation { isZoomDialVisible = true }
+                                        withAnimation { isZoomDialPresented = true }
                                     }
                                 )
                             }
@@ -228,6 +232,22 @@ struct ContentView: View {
                         Color.clear.frame(width: 44, height: 44)
                     }
                     .padding(.horizontal, 40).padding(.bottom, 40)
+                }
+                
+                // Display Zoom Dial overlay when presented
+                if isZoomDialPresented {
+                    ZStack {
+                        Color.black.opacity(0.5).ignoresSafeArea().onTapGesture { withAnimation { isZoomDialPresented = false } }
+                        ZoomDialView(
+                            zoom: Binding(get: { cameraManager.currentZoomFactor }, set: { cameraManager.setZoom($0) }),
+                            minZoom: cameraManager.minZoomFactor,
+                            maxZoom: cameraManager.maxZoomFactor,
+                            majorTicks: zoomPresets
+                        )
+                        .frame(width: 260, height: 260)
+                        .transition(.scale.combined(with: .opacity))
+                    }
+                    .zIndex(200)
                 }
                 
                 // Animations
