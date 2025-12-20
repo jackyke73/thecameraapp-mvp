@@ -6,11 +6,9 @@ struct ContentView: View {
     @StateObject var cameraManager = CameraManager()
     @StateObject var locationManager = LocationManager()
     
-    // NEW: The Smoothing Engine
-    let smoother = CompassSmoother()
+    @State private var showMap = false
     
-    // 2. State to hold the dynamic advice from the Brain
-    @State var currentAdvice: DirectorAdvice?
+    
     
     // 3. DEFINE YOUR TARGET LANDMARK HERE
     // Example: The Campanile at UC Berkeley
@@ -19,60 +17,102 @@ struct ContentView: View {
         coordinate: CLLocationCoordinate2D(latitude: 37.8720, longitude: -122.2578)
     )
     
+    
+    var targetLandmarkForMap: MapLandmark {
+        MapLandmark(
+            name: targetLandmark.name,
+            coordinate: targetLandmark.coordinate
+        )
+    }
+    
+    
+    // NEW: The Smoothing Engine
+    let smoother = CompassSmoother()
+    
+    // 2. State to hold the dynamic advice from the Brain
+    @State var currentAdvice: DirectorAdvice?
+    
     var body: some View {
-        ZStack {
-            // Layer 1: The Real-World Camera Feed
-            CameraPreview(cameraManager: cameraManager)
-                .ignoresSafeArea()
-            
-            // Layer 2: The UI
-            VStack {
-                // Top Status Bar (GPS Debug info)
-                HStack {
-                    Circle()
-                        .fill(locationManager.permissionGranted ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                    Text(locationManager.permissionGranted ? "GPS ACTIVE" : "NO GPS")
-                        .font(.caption2)
-                        .bold()
-                        .foregroundColor(.white)
-                        .padding(4)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(4)
+        NavigationStack {
+            ZStack {
+                // Layer 1: The Real-World Camera Feed
+                CameraPreview(cameraManager: cameraManager)
+                    .ignoresSafeArea()
+                
+                // Layer 2: The UI
+                VStack {
+                    // Top Status Bar (GPS Debug info)
+                    HStack {
+                        Circle()
+                            .fill(locationManager.permissionGranted ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                        Text(locationManager.permissionGranted ? "GPS ACTIVE" : "NO GPS")
+                            .font(.caption2)
+                            .bold()
+                            .foregroundColor(.white)
+                            .padding(4)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(4)
+                        Spacer()
+                    }
+                    .padding(.top, 50)
+                    .padding(.horizontal)
+                    
                     Spacer()
+                    
+                    // Bottom Layer: The Director's Scope
+                    if let advice = currentAdvice {
+                        ScopeView(advice: advice)
+                            .padding(.bottom, 50)
+                    } else {
+                        // Loading State
+                        Text("Calibrating Sensors...")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding()
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(15)
+                            .padding(.bottom, 50)
+                    }
                 }
-                .padding(.top, 50)
+                
+            }
+            // REACTIVE LOGIC: Run this whenever the phone moves or turns
+            .onReceive(locationManager.$heading) { _ in
+                updateNavigationLogic()
+            }
+            .onReceive(locationManager.$location) { _ in
+                updateNavigationLogic()
+            }
+            .toolbar(.hidden, for: .navigationBar)
+            .overlay(alignment: .bottom) {
+                HStack {
+                    Spacer()
+                    Button {
+                        showMap = true
+                    } label: {
+                        Image(systemName: "map")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    
+                }
+                .padding(.bottom, 20)
                 .padding(.horizontal)
                 
-                Spacer()
-                
-                // Bottom Layer: The Director's Scope
-                if let advice = currentAdvice {
-                    ScopeView(advice: advice)
-                        .padding(.bottom, 50)
-                } else {
-                    // Loading State
-                    Text("Calibrating Sensors...")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(15)
-                        .padding(.bottom, 50)
-                }
             }
-        }
-        // REACTIVE LOGIC: Run this whenever the phone moves or turns
-        .onReceive(locationManager.$heading) { _ in
-            updateNavigationLogic()
-        }
-        .onReceive(locationManager.$location) { _ in
-            updateNavigationLogic()
+            .navigationDestination(isPresented: $showMap) {
+                MapScreen(locationManager: locationManager, landmark: targetLandmarkForMap)
+                
+            }
         }
     }
     
     // The Brain Function
-    func updateNavigationLogic() {
+    private func updateNavigationLogic() {
         guard let userLoc = locationManager.location,
               let rawHeading = locationManager.heading?.trueHeading else { return }
         
@@ -93,6 +133,8 @@ struct ContentView: View {
     }
 }
 
+
 #Preview {
     ContentView()
 }
+
