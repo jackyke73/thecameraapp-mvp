@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreLocation
 import AVFoundation
+import UIKit
 
 // Helper for Aspect Ratios
 enum AspectRatio: String, CaseIterable {
@@ -28,7 +29,10 @@ struct ContentView: View {
     // NEW: UI States for your requested features
     @State private var currentAspectRatio: AspectRatio = .fourThree
     @State private var currentZoom: CGFloat = 1.0
+    @State private var selectedPresetIndex: Int = 0
     @State private var showFlashAnimation = false
+    @State private var isCapturing = false
+    @State private var ellipsisStep = 0
     
     // Target: The Campanile (Change to test!)
     @State var targetLandmark = Landmark(
@@ -114,13 +118,57 @@ struct ContentView: View {
                             Text("Calibrating...").font(.headline).foregroundColor(.white).padding().background(.ultraThinMaterial).cornerRadius(15)
                         }
                         
-                        // Zoom Controls
-                        HStack(spacing: 20) {
-                            ZoomButton(label: "0.5x", factor: 0.5, currentZoom: $currentZoom, action: cameraManager.zoom)
-                            ZoomButton(label: "1x", factor: 1.0, currentZoom: $currentZoom, action: cameraManager.zoom)
-                            ZoomButton(label: "2x", factor: 2.0, currentZoom: $currentZoom, action: cameraManager.zoom)
+                        Spacer(minLength: 8)
+                        
+                        // Zoom Controls (device-aware, transparent, scroll between scales)
+                        VStack(spacing: 8) {
+                            // Removed scrollable TabView here
+                            
+                            // Also keep quick-tap buttons for direct jumps (optional)
+                            HStack(spacing: 24) {
+                                let epsilon: CGFloat = 0.001
+                                // Canonical stops we want to show in order
+                                let canonical: [CGFloat] = [0.5, 1.0, 2.0, 4.0, 8.0]
+                                let presets = canonical.filter { $0 >= cameraManager.minZoomFactor - epsilon && $0 <= cameraManager.maxZoomFactor + epsilon }
+                                
+                                ForEach(presets, id: \.self) { preset in
+                                    let labelText: String = {
+                                        if abs(preset - 0.5) < 0.001 { return ".5x" }
+                                        if abs(preset.rounded() - preset) < 0.001 { return String(format: "%.0fx", preset) }
+                                        return String(format: "%.1fx", preset)
+                                    }()
+                                    ZoomButton(label: labelText, factor: preset, currentZoom: $currentZoom, action: { value in
+                                        selectionHaptic()
+                                        cameraManager.zoom(factor: value)
+                                        if let idx = presets.firstIndex(of: value) {
+                                            selectedPresetIndex = idx
+                                        }
+                                    })
+                                }
+                            }
+                            .opacity(0.95)
+                            .onChange(of: currentZoom) { _, newValue in
+                                let presets = cameraManager.suggestedZoomPresets
+                                if let idx = presets.enumerated().min(by: { abs($0.element - newValue) < abs($1.element - newValue) })?.offset {
+                                    selectedPresetIndex = idx
+                                }
+                            }
+                            .onChange(of: cameraManager.suggestedZoomPresets) { _, newPresets in
+                                // If current zoom isn't close to any preset, snap to nearest available
+                                guard !newPresets.isEmpty else { return }
+                                if let nearest = newPresets.min(by: { abs($0 - currentZoom) < abs($1 - currentZoom) }) {
+                                    currentZoom = nearest
+                                }
+                                if let idx = newPresets.firstIndex(of: currentZoom) {
+                                    selectedPresetIndex = idx
+                                }
+                            }
                         }
-                        .padding(10).background(.ultraThinMaterial).clipShape(Capsule())
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 16)
+                        .background(Color.clear)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.bottom, 32)
                         
                         // Footer Actions
                         HStack {
@@ -138,8 +186,29 @@ struct ContentView: View {
                                 takePhoto()
                             } label: {
                                 ZStack {
-                                    Circle().strokeBorder(.white, lineWidth: 4).frame(width: 70, height: 70)
-                                    Circle().fill(.white).frame(width: 60, height: 60)
+                                    // Outer liquid-glass ring
+                                    Circle()
+                                        .fill(.ultraThinMaterial)
+                                        .frame(width: 78, height: 78)
+                                        .overlay(
+                                            Circle()
+                                                .stroke(Color.white.opacity(0.6), lineWidth: 1)
+                                        )
+                                        .shadow(color: Color.black.opacity(0.25), radius: 6, x: 0, y: 3)
+                                        .overlay(
+                                            // Soft highlight at the top for glass sheen
+                                            Circle()
+                                                .stroke(LinearGradient(
+                                                    colors: [Color.white.opacity(0.45), Color.white.opacity(0.1)],
+                                                    startPoint: .top,
+                                                    endPoint: .bottom
+                                                ), lineWidth: 2)
+                                                .blur(radius: 0.5)
+                                        )
+                                    // Inner white fill
+                                    Circle()
+                                        .fill(Color.white)
+                                        .frame(width: 64, height: 64)
                                 }
                             }
                             
@@ -159,13 +228,53 @@ struct ContentView: View {
                 if showFlashAnimation {
                     Color.white.ignoresSafeArea().transition(.opacity).zIndex(200)
                 }
+                if isCapturing {
+                    CapturingOverlay(ellipsisStep: ellipsisStep)
+                        .transition(.opacity)
+                        .zIndex(150)
+                        .onAppear {
+                            // Animate the dots every 0.4s
+                            Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { timer in
+                                if !isCapturing {
+                                    timer.invalidate()
+                                } else {
+                                    ellipsisStep = (ellipsisStep + 1) % 4
+                                }
+                            }
+                        }
+                }
             }
             .navigationDestination(isPresented: $showMap) {
                 MapScreen(locationManager: locationManager, landmark: targetLandmarkBinding)
             }
             .onReceive(locationManager.$heading) { _ in updateNavigationLogic() }
             .onReceive(locationManager.$location) { _ in updateNavigationLogic() }
+            .onReceive(cameraManager.captureDidFinish) { _ in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isCapturing = false
+                }
+            }
+            .onAppear {
+                // Request initial zoom to 1× in UI; CameraManager also tries to set 1×
+                currentZoom = 1.0
+            }
+            .onChange(of: cameraManager.permissionGranted) { _, granted in
+                guard granted else { return }
+                // Apply 1× on permission to keep UI and camera aligned
+                currentZoom = 1.0
+                cameraManager.zoom(factor: 1.0)
+                if let idx = cameraManager.suggestedZoomPresets.firstIndex(of: 1.0) {
+                    selectedPresetIndex = idx
+                }
+            }
         }
+    }
+    
+    // MARK: - Haptics
+    private func selectionHaptic() {
+        let generator = UISelectionFeedbackGenerator()
+        generator.prepare()
+        generator.selectionChanged()
     }
     
     // MARK: - Logic
@@ -179,6 +288,7 @@ struct ContentView: View {
     }
     
     func takePhoto() {
+        isCapturing = true
         // 1. Flash Animation
         withAnimation(.easeOut(duration: 0.1)) { showFlashAnimation = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -205,6 +315,27 @@ struct ContentView: View {
         }
         withAnimation(.linear(duration: 0.1)) { self.currentAdvice = newAdvice }
     }
+    
+    // Helper for preset labels updated to use multiplication sign
+    func labelForPreset(_ preset: CGFloat) -> String {
+        // Find the best matching preset from suggestedZoomPresets close to given preset
+        guard let best = cameraManager.suggestedZoomPresets.min(by: { abs($0 - preset) < abs($1 - preset) }) else {
+            let whole = abs(preset.rounded() - preset) < 0.001
+            return whole ? String(format: "%.0f×", preset) : String(format: "%.1f×", preset)
+        }
+        
+        var xLabel: String
+        
+        if abs(best - 1.0) < 0.001 { xLabel = "1×" }
+        else if abs(best - 0.5) < 0.001 { xLabel = "0.5×" }
+        else if abs(best - 2.0) < 0.001 { xLabel = "2×" }
+        else if abs(best - 3.0) < 0.001 { xLabel = "3×" }
+        else {
+            xLabel = String(format: "%.1f×", preset)
+        }
+        
+        return xLabel
+    }
 }
 
 // Helper Button
@@ -226,6 +357,24 @@ struct ZoomButton: View {
                 .background(currentZoom == factor ? Color.white.opacity(0.2) : Color.clear)
                 .clipShape(Circle())
         }
+    }
+}
+
+struct CapturingOverlay: View {
+    let ellipsisStep: Int
+    var body: some View {
+        let dots = String(repeating: ".", count: ellipsisStep)
+        return Text("Capturing" + dots)
+            .font(.footnote.weight(.semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule().stroke(Color.white.opacity(0.25), lineWidth: 1)
+            )
+            .padding(.bottom, 110)
     }
 }
 

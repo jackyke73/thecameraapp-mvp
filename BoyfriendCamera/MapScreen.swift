@@ -28,6 +28,11 @@ struct MapScreen: View {
     @State private var searchResults: [MKMapItem] = []
     @State private var isSearching = false
 
+    @State private var showSettings = false
+    @State private var showPlaceholder1 = false
+    @State private var showPlaceholder2 = false
+    @State private var appInstallDate = Date() // TODO: replace with persisted install date if available
+
     var body: some View {
         ZStack {
             // --- THE MAP ---
@@ -48,10 +53,31 @@ struct MapScreen: View {
                 fitBothLocations()
             }
             
-            // --- TOP RIGHT SATELLITE TOGGLE ---
+            // --- TOP RIGHT SETTINGS AND SATELLITE TOGGLE ---
             VStack {
                 HStack {
                     Spacer()
+                    // Settings button
+                    Button {
+                        showSettings = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "gearshape.fill")
+                            Text("Settings")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                        .shadow(radius: 3)
+                    }
+
+                    // Space between buttons
+                    Spacer().frame(width: 8)
+
+                    // Satellite toggle
                     Button {
                         withAnimation { isSatellite.toggle() }
                     } label: {
@@ -63,9 +89,9 @@ struct MapScreen: View {
                             .clipShape(Circle())
                             .shadow(radius: 3)
                     }
-                    .padding(.top, 10) // Adjust for notch if needed
                     .padding(.trailing, 10)
                 }
+                .padding(.top, 10)
                 Spacer()
             }
             
@@ -103,6 +129,21 @@ struct MapScreen: View {
         .searchable(text: $searchText, isPresented: $isSearching, prompt: "Search for new target...")
         .onChange(of: searchText) { _ in
             performSearch()
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsSheet(showPlaceholder1: $showPlaceholder1, showPlaceholder2: $showPlaceholder2, totalDaysUsed: totalDaysUsed)
+                .presentationDetents([.medium, .large])
+                .presentationBackground(.ultraThinMaterial)
+        }
+        .sheet(isPresented: $showPlaceholder1) {
+            PlaceholderDetailSheet(title: "Placeholder 1")
+                .presentationDetents([.medium])
+                .presentationBackground(.ultraThinMaterial)
+        }
+        .sheet(isPresented: $showPlaceholder2) {
+            PlaceholderDetailSheet(title: "Placeholder 2")
+                .presentationDetents([.medium])
+                .presentationBackground(.ultraThinMaterial)
         }
     }
     
@@ -167,4 +208,135 @@ struct MapScreen: View {
         // 3. Re-fit the map
         fitBothLocations()
     }
+
+    var totalDaysUsed: Int {
+        let start = Calendar.current.startOfDay(for: appInstallDate)
+        let today = Calendar.current.startOfDay(for: Date())
+        return Calendar.current.dateComponents([.day], from: start, to: today).day ?? 0
+    }
 }
+struct SettingsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var showPlaceholder1: Bool
+    @Binding var showPlaceholder2: Bool
+    let totalDaysUsed: Int
+    @State private var selectedDate = Date()
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // Top bar inside sheet
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.down")
+                        Text("Close")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                }
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.top)
+
+            // Two clickable placeholder blocks
+            VStack(spacing: 12) {
+                Button { showPlaceholder1 = true } label: {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Text("PLACEHOLDER 1")
+                                .font(.headline.weight(.semibold))
+                                .foregroundColor(.white)
+                        )
+                        .frame(height: 80)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.15), lineWidth: 1)
+                        )
+                }
+                Button { showPlaceholder2 = true } label: {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Text("PLACEHOLDER 2")
+                                .font(.headline.weight(.semibold))
+                                .foregroundColor(.white)
+                        )
+                        .frame(height: 80)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.15), lineWidth: 1)
+                        )
+                }
+            }
+            .padding(.horizontal)
+
+            // Calendar + total days used
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Total days used: \(totalDaysUsed)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.white)
+                DatePicker("Calendar", selection: $selectedDate, displayedComponents: [.date])
+                    .datePickerStyle(.graphical)
+                    .tint(.white)
+            }
+            .padding(.horizontal)
+
+            Spacer()
+        }
+        .presentationBackground(.ultraThinMaterial)
+    }
+}
+
+struct PlaceholderDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.down")
+                        Text("Back")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                }
+                Spacer()
+                Text(title)
+                    .font(.headline.weight(.semibold))
+                    .foregroundColor(.white)
+                Spacer()
+                Color.clear.frame(width: 60, height: 1)
+            }
+            .padding(.horizontal)
+            .padding(.top)
+
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    Text("Content for \(title)")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding()
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.15), lineWidth: 1)
+                )
+                .padding()
+            Spacer()
+        }
+        .presentationBackground(.ultraThinMaterial)
+    }
+}
+

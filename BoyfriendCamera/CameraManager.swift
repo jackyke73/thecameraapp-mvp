@@ -12,6 +12,30 @@ class CameraManager: NSObject, ObservableObject,
     @Published var permissionGranted = false
     @Published var isPersonDetected = false
     @Published var capturedImage: UIImage?
+    @Published var minZoomFactor: CGFloat = 1.0
+    @Published var maxZoomFactor: CGFloat = 1.0
+
+    // Lens switchover zoom factors (for virtual/multi-camera devices)
+    private var lensSwitchOverFactors: [CGFloat] = []
+
+    // Common presets we try to expose if the device supports them
+    var suggestedZoomPresets: [CGFloat] {
+        // Base candidates: common optical stops
+        var candidates: [CGFloat] = [0.5, 1.0, 2.0, 3.0]
+        // Add lens switchovers for better fidelity
+        candidates.append(contentsOf: lensSwitchOverFactors)
+        // Deduplicate and filter to min/max
+        let epsilon: CGFloat = 0.001
+        let filtered = Set(candidates).filter { $0 >= minZoomFactor - epsilon && $0 <= maxZoomFactor + epsilon }
+        // Ensure 1.0 is present if supported
+        var result = Array(filtered)
+        if 1.0 >= minZoomFactor - epsilon && 1.0 <= maxZoomFactor + epsilon && !result.contains(1.0) {
+            result.append(1.0)
+        }
+        // Sort ascending
+        result.sort()
+        return result
+    }
 
     let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "cameraQueue")
@@ -27,6 +51,9 @@ class CameraManager: NSObject, ObservableObject,
     // Store the location at the moment the shutter is pressed
     private var pendingLocation: CLLocation?
 
+    // Publisher to notify UI when capture+save finishes
+    let captureDidFinish = PassthroughSubject<Void, Never>()
+
     override init() {
         super.init()
         checkPermissions()
@@ -41,7 +68,11 @@ class CameraManager: NSObject, ObservableObject,
             do {
                 try device.lockForConfiguration()
                 // Clamp zoom to safe limits (e.g., 1x to 5x)
-                let clampedFactor = max(device.minAvailableVideoZoomFactor, min(factor, device.maxAvailableVideoZoomFactor))
+                let lower = max(device.minAvailableVideoZoomFactor, self.minZoomFactor)
+                let upper = min(device.maxAvailableVideoZoomFactor, self.maxZoomFactor)
+                var target = factor
+                if abs(factor - 1.0) < 0.001 { target = 1.0 }
+                let clampedFactor = max(lower, min(target, upper))
                 device.ramp(toVideoZoomFactor: clampedFactor, withRate: 2.0)
                 device.unlockForConfiguration()
             } catch {
@@ -126,6 +157,43 @@ class CameraManager: NSObject, ObservableObject,
             print("No camera found for position: \(position)")
             self.session.commitConfiguration()
             return
+        }
+
+        // Capture virtual device switchover zoom factors if available
+        if device.isVirtualDevice {
+            self.lensSwitchOverFactors = device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat(truncating: $0) }
+        } else {
+            self.lensSwitchOverFactors = []
+        }
+
+        // Update zoom capability bounds for UI
+        let minFactor = device.minAvailableVideoZoomFactor
+        let maxFactor = device.maxAvailableVideoZoomFactor
+        DispatchQueue.main.async {
+            self.minZoomFactor = minFactor
+            self.maxZoomFactor = maxFactor
+        }
+
+        // Schedule initial zoom to 1.0x or nearest preset to keep UI and camera aligned
+        let initialZoom: CGFloat
+        if 1.0 >= minFactor && 1.0 <= maxFactor {
+            initialZoom = 1.0
+        } else {
+            let presets = self.suggestedZoomPresets
+            initialZoom = presets.min(by: { abs($0 - 1.0) < abs($1 - 1.0) }) ?? minFactor
+        }
+        // Apply initial zoom on the session queue after configuration commits
+        self.sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            // Ensure device input exists before applying zoom
+            if self.deviceInput == nil {
+                // Delay slightly to allow input to be set and session to start
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self.zoom(factor: initialZoom)
+                }
+            } else {
+                self.zoom(factor: initialZoom)
+            }
         }
 
         // 3. Add Input
@@ -213,6 +281,9 @@ class CameraManager: NSObject, ObservableObject,
 
         saveToPhotos(imageData: data, location: pendingLocation)
         pendingLocation = nil
+        DispatchQueue.main.async {
+            self.captureDidFinish.send(())
+        }
     }
 
     private func saveToPhotos(imageData: Data, location: CLLocation?) {
@@ -236,3 +307,4 @@ class CameraManager: NSObject, ObservableObject,
         }
     }
 }
+
