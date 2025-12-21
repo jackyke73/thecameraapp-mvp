@@ -1,11 +1,20 @@
 import SwiftUI
 import CoreLocation
+import AVFoundation // <--- FIX: Added this import
 
 // --- 1. Enum ---
 enum AspectRatio: String, CaseIterable {
-    case fourThree = "4:3"; case sixteenNine = "16:9"; case square = "1:1"
+    case fourThree = "4:3"
+    case sixteenNine = "16:9"
+    case square = "1:1"
+    
+    // Target Height / Width ratio
     var value: CGFloat {
-        switch self { case .fourThree: return 4.0/3.0; case .sixteenNine: return 16.0/9.0; case .square: return 1.0 }
+        switch self {
+        case .fourThree: return 4.0 / 3.0    // 1.33
+        case .sixteenNine: return 16.0 / 9.0 // 1.77 (Tall)
+        case .square: return 1.0             // 1.0  (Square)
+        }
     }
 }
 
@@ -20,12 +29,15 @@ struct ContentView: View {
     @State private var showFlashAnimation = false
     @State private var isCapturing = false
     @State private var isZoomDialVisible = false
+    
+    // Default Aspect Ratio
     @State private var currentAspectRatio: AspectRatio = .fourThree
     
+    // Gallery & Thumbnail States
     @State private var showPhotoReview = false
     @State private var thumbnailScale: CGFloat = 1.0
     
-    // SETTINGS
+    // SETTINGS STATES
     @State private var showSettings = false
     @State private var exposureValue: Float = 0.0
     @State private var whiteBalanceValue: Float = 5500.0
@@ -36,9 +48,11 @@ struct ContentView: View {
     @State private var isTimerEnabled = false
     
     @State var targetLandmark = Landmark(name: "The Campanile", coordinate: CLLocationCoordinate2D(latitude: 37.8720, longitude: -122.2578))
+    
     var targetLandmarkBinding: Binding<MapLandmark> {
         Binding(get: { MapLandmark(name: targetLandmark.name, coordinate: targetLandmark.coordinate) }, set: { new in targetLandmark = Landmark(name: new.name, coordinate: new.coordinate) })
     }
+    
     @State private var startZoomValue: CGFloat = 1.0
     
     var body: some View {
@@ -49,27 +63,40 @@ struct ContentView: View {
                 // 1. CAMERA CONTAINER
                 GeometryReader { geo in
                     let width = geo.size.width
+                    
+                    // 1. Dimensions
                     let sensorRatio: CGFloat = 4.0 / 3.0
                     let sensorHeight = width * sensorRatio
                     let targetHeight = width * currentAspectRatio.value
+                    
+                    // 2. Scaling Logic
                     let scaleFactor: CGFloat = currentAspectRatio.value > sensorRatio ? (currentAspectRatio.value / sensorRatio) : 1.0
                     
                     ZStack {
+                        // The actual camera stream
                         CameraPreview(cameraManager: cameraManager)
                             .frame(width: width, height: sensorHeight)
                             .scaleEffect(scaleFactor)
                             
+                        // The Grid
                         if isGridEnabled {
-                            GridOverlay().stroke(Color.white.opacity(0.3), lineWidth: 1)
+                            GridOverlay()
+                                .stroke(Color.white.opacity(0.3), lineWidth: 1)
                                 .frame(width: width, height: targetHeight)
                         }
                     }
+                    // 3. Frame & Mask
                     .frame(width: width, height: targetHeight)
                     .clipped()
                     .position(x: geo.size.width / 2, y: geo.size.height / 2)
                     .gesture(
                         MagnificationGesture()
-                            .onChanged { val in cameraManager.setZoomInstant(cameraManager.currentZoomFactor * val) }
+                            .onChanged { val in
+                                // DISABLE PINCH TO ZOOM FOR FRONT CAMERA
+                                guard cameraManager.currentPosition == .back else { return }
+                                
+                                cameraManager.setZoomInstant(cameraManager.currentZoomFactor * val)
+                            }
                     )
                 }
                 .ignoresSafeArea()
@@ -81,7 +108,7 @@ struct ContentView: View {
                 
                 // 3. UI CONTROLS
                 VStack {
-                    // TOP BAR
+                    // --- TOP BAR ---
                     HStack {
                         HStack(spacing: 6) {
                             Circle().fill(locationManager.permissionGranted ? Color.green : Color.red).frame(width: 6, height: 6)
@@ -91,43 +118,52 @@ struct ContentView: View {
                         
                         Spacer()
                         
+                        // Settings Button
                         Button { withAnimation { showSettings.toggle() } } label: {
                             Image(systemName: "slider.horizontal.3").font(.headline)
                                 .foregroundColor(showSettings ? .yellow : .white)
                                 .padding(8).background(.ultraThinMaterial).clipShape(Circle())
                         }
                         
+                        // Aspect Ratio Button
                         Button { toggleAspectRatio() } label: {
-                            Text(currentAspectRatio.rawValue).font(.footnote.bold()).foregroundColor(.white).padding(8).background(.ultraThinMaterial).clipShape(Capsule())
+                            Text(currentAspectRatio.rawValue)
+                                .font(.footnote.bold())
+                                .foregroundColor(.white)
+                                .padding(8)
+                                .background(.ultraThinMaterial)
+                                .clipShape(Capsule())
                                 .overlay(Capsule().stroke(Color.yellow, lineWidth: currentAspectRatio != .fourThree ? 1 : 0))
                         }
                     }
                     .padding(.top, 50).padding(.horizontal)
                     
-                    // SETTINGS PANEL
+                    // --- SETTINGS PANEL ---
                     if showSettings {
                         VStack(spacing: 15) {
                             HStack(spacing: 20) {
                                 ToggleButton(icon: "grid", label: "Grid", isOn: $isGridEnabled)
                                 ToggleButton(icon: "timer", label: "3s Timer", isOn: $isTimerEnabled)
                             }
-                            // Exposure (Available on Front/Back)
+                            // Exposure
                             HStack {
                                 Image(systemName: "sun.max.fill").font(.caption).foregroundColor(.white)
-                                Slider(value: $exposureValue, in: -2...2).tint(.yellow)
+                                Slider(value: $exposureValue, in: -2...2)
+                                    .tint(.yellow)
                                     .onChange(of: exposureValue) { _, val in cameraManager.setExposure(ev: val) }
                                 Text(String(format: "%.1f", exposureValue)).font(.caption.monospacedDigit()).foregroundColor(.white).frame(width: 30)
                             }
-                            
-                            // Hide unsupported sliders
+                            // WB
                             if cameraManager.isWBSupported {
                                 HStack {
                                     Image(systemName: "thermometer").font(.caption).foregroundColor(.white)
-                                    Slider(value: $whiteBalanceValue, in: 3000...8000).tint(.orange)
+                                    Slider(value: $whiteBalanceValue, in: 3000...8000)
+                                        .tint(.orange)
                                         .onChange(of: whiteBalanceValue) { _, val in cameraManager.setWhiteBalance(kelvin: val) }
                                     Text("\(Int(whiteBalanceValue))K").font(.caption.monospacedDigit()).foregroundColor(.white).frame(width: 45)
                                 }
                             }
+                            // Focus
                             if cameraManager.isFocusSupported {
                                 HStack {
                                     Image(systemName: "flower").font(.caption).foregroundColor(.white)
@@ -136,6 +172,7 @@ struct ContentView: View {
                                     Image(systemName: "mountain.2").font(.caption).foregroundColor(.white)
                                 }
                             }
+                            // Torch
                             if cameraManager.isTorchSupported {
                                 HStack {
                                     Image(systemName: "bolt.slash.fill").font(.caption).foregroundColor(.white)
@@ -144,6 +181,7 @@ struct ContentView: View {
                                     Image(systemName: "bolt.fill").font(.caption).foregroundColor(.yellow)
                                 }
                             }
+                            // Reset
                             Button("Reset All") {
                                 exposureValue = 0; whiteBalanceValue = 5500; focusValue = 0.5; torchValue = 0.0
                                 cameraManager.resetSettings()
@@ -161,7 +199,7 @@ struct ContentView: View {
                         ScopeView(advice: advice).padding(.bottom, 10)
                     }
                     
-                    // --- ZOOM CONTROLS (Hide if Front Camera has only 1 option) ---
+                    // --- ZOOM CONTROLS (Only if multiple lenses / Back Camera) ---
                     if cameraManager.zoomButtons.count > 1 {
                         ZStack(alignment: .bottom) {
                             if isZoomDialVisible {
@@ -194,20 +232,17 @@ struct ContentView: View {
                                 }
                         )
                     } else {
-                        // Spacer if no zoom controls
                         Color.clear.frame(height: 100)
                     }
                     
                     // --- BOTTOM BAR ---
                     HStack {
-                        // MAP
                         Button { showMap = true } label: {
                             Image(systemName: "map.fill").font(.title3).foregroundColor(.white).frame(width: 44, height: 44).background(.ultraThinMaterial).clipShape(Circle())
                         }
-                        
                         Spacer()
                         
-                        // NEW: FLIP CAMERA
+                        // Flip Camera
                         Button { cameraManager.switchCamera() } label: {
                             Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(.title3)
@@ -218,7 +253,7 @@ struct ContentView: View {
                         }
                         .padding(.trailing, 10)
 
-                        // SHUTTER
+                        // Shutter
                         Button { takePhoto() } label: {
                             ZStack {
                                 Circle().stroke(.white, lineWidth: 4).frame(width: 72, height: 72)
@@ -228,7 +263,7 @@ struct ContentView: View {
                         
                         Spacer()
                         
-                        // GALLERY
+                        // Gallery
                         Button { showPhotoReview = true } label: {
                             if let image = cameraManager.capturedImage {
                                 Image(uiImage: image)
