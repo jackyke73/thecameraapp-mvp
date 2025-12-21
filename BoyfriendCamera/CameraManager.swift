@@ -11,20 +11,23 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     @Published var isPersonDetected = false
     @Published var capturedImage: UIImage?
     
-    // Capabilities (Dynamic)
+    // Capabilities
     @Published var isWBSupported: Bool = false
     @Published var isFocusSupported: Bool = false
     @Published var isTorchSupported: Bool = false
     
-    // State
+    // Zoom
     @Published var minZoomFactor: CGFloat = 0.5
     @Published var maxZoomFactor: CGFloat = 15.0
     @Published var currentZoomFactor: CGFloat = 1.0
     @Published var zoomButtons: [CGFloat] = [0.5, 1.0, 2.0, 4.0]
     
-    // Timer State
+    // Timer
     @Published var isTimerRunning = false
     @Published var timerCount = 0
+    
+    // Camera Position (Back by default)
+    @Published var currentPosition: AVCaptureDevice.Position = .back
 
     private var zoomScaler: CGFloat = 2.0
 
@@ -46,77 +49,65 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         super.init()
         checkPermissions()
     }
-
-    // MARK: - PRO SETTINGS (Hardened)
     
+    // MARK: - SWITCH CAMERA
+    func switchCamera() {
+        // Toggle Position
+        currentPosition = (currentPosition == .back) ? .front : .back
+        
+        // Restart Setup
+        sessionQueue.async {
+            self.session.stopRunning()
+            // Remove Inputs
+            if let input = self.deviceInput {
+                self.session.removeInput(input)
+                self.deviceInput = nil
+            }
+            // Re-setup
+            self.setupCamera()
+        }
+    }
+
+    // MARK: - SETTINGS (Exposure, WB, Focus, Torch)
+    // (Same as before, just kept compact)
     func setExposure(ev: Float) {
         sessionQueue.async {
             guard let device = self.activeDevice else { return }
-            do {
-                try device.lockForConfiguration()
-                device.setExposureTargetBias(ev, completionHandler: nil)
-                device.unlockForConfiguration()
-            } catch { print("Exposure error: \(error)") }
+            do { try device.lockForConfiguration(); device.setExposureTargetBias(ev, completionHandler: nil); device.unlockForConfiguration() } catch {}
         }
     }
-    
     func setWhiteBalance(kelvin: Float) {
         sessionQueue.async {
-            guard let device = self.activeDevice else { return }
-            
-            // 1. Check support to prevent "Kill"
-            if !device.isWhiteBalanceModeSupported(.locked) { return }
-            
+            guard let device = self.activeDevice, device.isWhiteBalanceModeSupported(.locked) else { return }
             do {
                 try device.lockForConfiguration()
-                
-                // 2. Calculate Gains
                 let tempAndTint = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: kelvin, tint: 0)
                 var gains = device.deviceWhiteBalanceGains(for: tempAndTint)
-                
-                // 3. STRICT SAFETY CLAMP (Prevents Crash)
                 let maxG = device.maxWhiteBalanceGain
-                // Typically max gain is around 3.0-4.0. We clamp to be safe.
                 gains.redGain = max(1.0, min(gains.redGain, maxG))
                 gains.greenGain = max(1.0, min(gains.greenGain, maxG))
                 gains.blueGain = max(1.0, min(gains.blueGain, maxG))
-                
                 device.setWhiteBalanceModeLocked(with: gains, completionHandler: nil)
                 device.unlockForConfiguration()
-            } catch { print("WB Calc Error: \(error)") }
+            } catch {}
         }
     }
-    
     func setLensPosition(_ position: Float) {
         sessionQueue.async {
-            guard let device = self.activeDevice else { return }
-            // Check capability
-            if !device.isFocusModeSupported(.locked) { return }
-            
-            do {
-                try device.lockForConfiguration()
-                device.setFocusModeLocked(lensPosition: position, completionHandler: nil)
-                device.unlockForConfiguration()
-            } catch { print("Focus Error: \(error)") }
+            guard let device = self.activeDevice, device.isFocusModeSupported(.locked) else { return }
+            do { try device.lockForConfiguration(); device.setFocusModeLocked(lensPosition: position, completionHandler: nil); device.unlockForConfiguration() } catch {}
         }
     }
-    
     func setTorchLevel(_ level: Float) {
         sessionQueue.async {
             guard let device = self.activeDevice, device.hasTorch else { return }
             do {
                 try device.lockForConfiguration()
-                if level <= 0.01 {
-                    device.torchMode = .off
-                } else {
-                    // Torch level must be between 0.0 and 1.0 (exclusive of 0)
-                    try device.setTorchModeOn(level: max(0.01, min(1.0, level)))
-                }
+                if level <= 0.01 { device.torchMode = .off } else { try device.setTorchModeOn(level: max(0.01, min(1.0, level))) }
                 device.unlockForConfiguration()
-            } catch { print("Torch Error: \(error)") }
+            } catch {}
         }
     }
-    
     func resetSettings() {
         sessionQueue.async {
             guard let device = self.activeDevice else { return }
@@ -128,10 +119,10 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
                 if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
                 if device.hasTorch { device.torchMode = .off }
                 device.unlockForConfiguration()
-            } catch { print("Reset Error: \(error)") }
+            } catch {}
         }
     }
-
+    
     // MARK: - ZOOM
     func setZoomInstant(_ uiFactor: CGFloat) {
         sessionQueue.async {
@@ -143,10 +134,9 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
                 device.videoZoomFactor = clamped
                 device.unlockForConfiguration()
                 DispatchQueue.main.async { self.currentZoomFactor = uiFactor }
-            } catch { print("Zoom Error: \(error)") }
+            } catch {}
         }
     }
-    
     func setZoomSmooth(_ uiFactor: CGFloat) {
         sessionQueue.async {
             guard let device = self.activeDevice else { return }
@@ -157,28 +147,22 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
                 device.ramp(toVideoZoomFactor: clamped, withRate: 5.0)
                 device.unlockForConfiguration()
                 DispatchQueue.main.async { self.currentZoomFactor = uiFactor }
-            } catch { print("Zoom Error: \(error)") }
+            } catch {}
         }
     }
 
-    // MARK: - CAPTURE WITH TIMER
+    // MARK: - CAPTURE
     func capturePhoto(location: CLLocation?, aspectRatioValue: CGFloat, useTimer: Bool) {
         if useTimer {
-            // Start Timer on Main Thread
-            self.timerCount = 3
-            self.isTimerRunning = true
-            
+            self.timerCount = 3; self.isTimerRunning = true
             Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
                 self.timerCount -= 1
                 if self.timerCount <= 0 {
-                    timer.invalidate()
-                    self.isTimerRunning = false
-                    // Actually take the photo
+                    timer.invalidate(); self.isTimerRunning = false
                     self.performCapture(location: location, ratio: aspectRatioValue)
                 }
             }
         } else {
-            // Instant
             performCapture(location: location, ratio: aspectRatioValue)
         }
     }
@@ -187,10 +171,13 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         AudioServicesPlaySystemSound(1108)
         pendingLocation = location
         pendingAspectRatio = ratio
-        
         sessionQueue.async {
             if let connection = self.photoOutput.connection(with: .video) {
+                // Keep orientation portrait for consistency
                 connection.videoOrientation = .portrait
+                // FIX: If front camera, mirror logic is usually handled by the system or post-processing,
+                // but standard AVCapture doesn't auto-mirror photo output by default.
+                // We will leave it raw (reality) and rely on preview being mirrored.
             }
             let settings = AVCapturePhotoSettings()
             self.photoOutput.capturePhoto(with: settings, delegate: self)
@@ -199,7 +186,20 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         guard let data = photo.fileDataRepresentation(), let originalImage = UIImage(data: data) else { return }
-        let croppedImage = cropToRatio(originalImage, ratio: pendingAspectRatio)
+        
+        // Fix Orientation
+        var fixedImage = fixOrientation(img: originalImage)
+        
+        // MIRROR IF FRONT CAMERA (Selfie Mode)
+        if self.currentPosition == .front {
+            if let cgImage = fixedImage.cgImage {
+                // Flipping horizontally
+                fixedImage = UIImage(cgImage: cgImage, scale: fixedImage.scale, orientation: .leftMirrored)
+                fixedImage = fixOrientation(img: fixedImage) // Bake it in
+            }
+        }
+        
+        let croppedImage = cropToRatio(fixedImage, ratio: pendingAspectRatio)
         DispatchQueue.main.async { self.capturedImage = croppedImage }
         if let jpegData = croppedImage.jpegData(compressionQuality: 1.0) {
             saveToCustomAlbum(imageData: jpegData, location: pendingLocation)
@@ -209,12 +209,23 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     
     private func cropToRatio(_ image: UIImage, ratio: CGFloat) -> UIImage {
         let w = image.size.width; let h = image.size.height
-        let currentRatio = w / h
         var newW = w; var newH = h
-        if currentRatio > ratio { newW = h * ratio } else { newH = w / ratio }
+        let currentRatio = h / w
+        if currentRatio > ratio { newH = w * ratio } else { newW = h / ratio }
         let x = (w - newW) / 2.0; let y = (h - newH) / 2.0
-        guard let cg = image.cgImage?.cropping(to: CGRect(x: x, y: y, width: newW, height: newH)) else { return image }
-        return UIImage(cgImage: cg, scale: image.scale, orientation: image.imageOrientation)
+        if let cg = image.cgImage?.cropping(to: CGRect(x: x, y: y, width: newW, height: newH)) {
+            return UIImage(cgImage: cg, scale: image.scale, orientation: image.imageOrientation)
+        }
+        return image
+    }
+    
+    private func fixOrientation(img: UIImage) -> UIImage {
+        if img.imageOrientation == .up { return img }
+        UIGraphicsBeginImageContextWithOptions(img.size, false, img.scale)
+        img.draw(in: CGRect(origin: .zero, size: img.size))
+        let normalized = UIGraphicsGetImageFromCurrentImageContext() ?? img
+        UIGraphicsEndImageContext()
+        return normalized
     }
 
     private func saveToCustomAlbum(imageData: Data, location: CLLocation?) {
@@ -250,62 +261,79 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         }
     }
 
-    // MARK: - SETUP
+    // MARK: - SETUP (Handles Front/Back)
     private func setupCamera() {
         session.beginConfiguration()
         session.sessionPreset = .photo
         
-        let deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInTripleCamera, .builtInDualWideCamera]
-        guard let device = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes, mediaType: .video, position: .back).devices.first else {
-            setupStandardCamera(); return
-        }
-        self.activeDevice = device
-        self.zoomScaler = 2.0
+        var device: AVCaptureDevice?
         
-        DispatchQueue.main.async {
-            self.minZoomFactor = 0.5
-            self.maxZoomFactor = device.maxAvailableVideoZoomFactor / self.zoomScaler
-            self.zoomButtons = [0.5, 1.0, 2.0, 4.0]
-            // Update Capabilities
-            self.isWBSupported = device.isWhiteBalanceModeSupported(.locked)
-            self.isFocusSupported = device.isFocusModeSupported(.locked)
-            self.isTorchSupported = device.hasTorch
+        if currentPosition == .back {
+            // Find best Back Camera
+            let types: [AVCaptureDevice.DeviceType] = [.builtInTripleCamera, .builtInDualWideCamera, .builtInWideAngleCamera]
+            device = AVCaptureDevice.DiscoverySession(deviceTypes: types, mediaType: .video, position: .back).devices.first
+            self.zoomScaler = 2.0 // Assume Pro lens logic
+            
+            // Fallback for single lens
+            if device?.deviceType == .builtInWideAngleCamera { self.zoomScaler = 1.0 }
+        } else {
+            // Find Front Camera
+            device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+            // Or TrueDepth
+            if device == nil {
+                device = AVCaptureDevice.default(.builtInTrueDepthCamera, for: .video, position: .front)
+            }
+            self.zoomScaler = 1.0
         }
+        
+        guard let activeDevice = device else {
+            session.commitConfiguration()
+            return
+        }
+        
+        self.activeDevice = activeDevice
         
         do {
-            let input = try AVCaptureDeviceInput(device: device)
+            let input = try AVCaptureDeviceInput(device: activeDevice)
             if session.canAddInput(input) { session.addInput(input) }
-            deviceInput = input
+            self.deviceInput = input
         } catch { print("Input Error: \(error)") }
         
         if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
         if session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
-        videoOutput.connection(with: .video)?.videoOrientation = .portrait
-        session.commitConfiguration()
-        session.startRunning()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.setZoomInstant(1.0) }
-    }
-    
-    private func setupStandardCamera() {
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else { return }
-        self.activeDevice = device
-        self.zoomScaler = 1.0
-        DispatchQueue.main.async {
-            self.minZoomFactor = 1.0; self.maxZoomFactor = 5.0; self.zoomButtons = [1.0, 2.0]
-            self.isWBSupported = device.isWhiteBalanceModeSupported(.locked)
-            self.isFocusSupported = device.isFocusModeSupported(.locked)
-            self.isTorchSupported = device.hasTorch
+        
+        // MIRROR PREVIEW IF FRONT
+        if let conn = videoOutput.connection(with: .video) {
+            conn.videoOrientation = .portrait
+            if currentPosition == .front {
+                conn.isVideoMirrored = true
+            } else {
+                conn.isVideoMirrored = false
+            }
         }
-        do {
-            let input = try AVCaptureDeviceInput(device: device)
-            if session.canAddInput(input) { session.addInput(input) }
-            deviceInput = input
-        } catch { return }
-        if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
-        if session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
-        videoOutput.connection(with: .video)?.videoOrientation = .portrait
+        
         session.commitConfiguration()
         session.startRunning()
+        
+        // Update UI State on Main Thread
+        DispatchQueue.main.async {
+            if self.currentPosition == .back {
+                self.minZoomFactor = 0.5
+                self.maxZoomFactor = activeDevice.maxAvailableVideoZoomFactor / self.zoomScaler
+                self.zoomButtons = [0.5, 1.0, 2.0, 4.0]
+            } else {
+                // Front Camera Defaults
+                self.minZoomFactor = 1.0
+                self.maxZoomFactor = activeDevice.maxAvailableVideoZoomFactor // Usually small digital zoom only
+                self.zoomButtons = [1.0] // Only 1x for selfie
+            }
+            
+            self.isWBSupported = activeDevice.isWhiteBalanceModeSupported(.locked)
+            self.isFocusSupported = activeDevice.isFocusModeSupported(.locked)
+            self.isTorchSupported = activeDevice.hasTorch
+            
+            self.setZoomInstant(1.0)
+        }
     }
     
     func checkPermissions() {
@@ -320,15 +348,5 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         try? handler.perform([bodyPoseRequest])
         DispatchQueue.main.async { self.isPersonDetected = (self.bodyPoseRequest.results?.first != nil) }
     }
-    func setFocus(point: CGPoint) {
-        sessionQueue.async {
-            guard let device = self.activeDevice else { return }
-            do {
-                try device.lockForConfiguration()
-                if device.isFocusPointOfInterestSupported { device.focusPointOfInterest = point; device.focusMode = .autoFocus }
-                if device.isExposurePointOfInterestSupported { device.exposurePointOfInterest = point; device.exposureMode = .autoExpose }
-                device.unlockForConfiguration()
-            } catch { print("Focus Error: \(error)") }
-        }
-    }
+    func setFocus(point: CGPoint) { sessionQueue.async { guard let device = self.activeDevice else { return }; do { try device.lockForConfiguration(); if device.isFocusPointOfInterestSupported { device.focusPointOfInterest = point; device.focusMode = .autoFocus }; if device.isExposurePointOfInterestSupported { device.exposurePointOfInterest = point; device.exposureMode = .autoExpose }; device.unlockForConfiguration() } catch {} } }
 }

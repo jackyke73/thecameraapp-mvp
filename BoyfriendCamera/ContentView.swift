@@ -3,16 +3,9 @@ import CoreLocation
 
 // --- 1. Enum ---
 enum AspectRatio: String, CaseIterable {
-    case fourThree = "4:3"
-    case sixteenNine = "16:9"
-    case square = "1:1"
-    
+    case fourThree = "4:3"; case sixteenNine = "16:9"; case square = "1:1"
     var value: CGFloat {
-        switch self {
-        case .fourThree: return 4.0 / 3.0
-        case .sixteenNine: return 16.0 / 9.0
-        case .square: return 1.0
-        }
+        switch self { case .fourThree: return 4.0/3.0; case .sixteenNine: return 16.0/9.0; case .square: return 1.0 }
     }
 }
 
@@ -27,14 +20,12 @@ struct ContentView: View {
     @State private var showFlashAnimation = false
     @State private var isCapturing = false
     @State private var isZoomDialVisible = false
-    
     @State private var currentAspectRatio: AspectRatio = .fourThree
     
-    // Gallery & Thumbnail States
     @State private var showPhotoReview = false
     @State private var thumbnailScale: CGFloat = 1.0
     
-    // SETTINGS STATES
+    // SETTINGS
     @State private var showSettings = false
     @State private var exposureValue: Float = 0.0
     @State private var whiteBalanceValue: Float = 5500.0
@@ -45,11 +36,9 @@ struct ContentView: View {
     @State private var isTimerEnabled = false
     
     @State var targetLandmark = Landmark(name: "The Campanile", coordinate: CLLocationCoordinate2D(latitude: 37.8720, longitude: -122.2578))
-    
     var targetLandmarkBinding: Binding<MapLandmark> {
         Binding(get: { MapLandmark(name: targetLandmark.name, coordinate: targetLandmark.coordinate) }, set: { new in targetLandmark = Landmark(name: new.name, coordinate: new.coordinate) })
     }
-    
     @State private var startZoomValue: CGFloat = 1.0
     
     var body: some View {
@@ -57,19 +46,25 @@ struct ContentView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 
-                // 1. CAMERA
+                // 1. CAMERA CONTAINER
                 GeometryReader { geo in
-                    let ratio = currentAspectRatio.value
-                    let w = geo.size.width
-                    let h = w * ratio
+                    let width = geo.size.width
+                    let sensorRatio: CGFloat = 4.0 / 3.0
+                    let sensorHeight = width * sensorRatio
+                    let targetHeight = width * currentAspectRatio.value
+                    let scaleFactor: CGFloat = currentAspectRatio.value > sensorRatio ? (currentAspectRatio.value / sensorRatio) : 1.0
                     
                     ZStack {
                         CameraPreview(cameraManager: cameraManager)
+                            .frame(width: width, height: sensorHeight)
+                            .scaleEffect(scaleFactor)
+                            
                         if isGridEnabled {
                             GridOverlay().stroke(Color.white.opacity(0.3), lineWidth: 1)
+                                .frame(width: width, height: targetHeight)
                         }
                     }
-                    .frame(width: w, height: h)
+                    .frame(width: width, height: targetHeight)
                     .clipped()
                     .position(x: geo.size.width / 2, y: geo.size.height / 2)
                     .gesture(
@@ -86,7 +81,7 @@ struct ContentView: View {
                 
                 // 3. UI CONTROLS
                 VStack {
-                    // --- TOP BAR ---
+                    // TOP BAR
                     HStack {
                         HStack(spacing: 6) {
                             Circle().fill(locationManager.permissionGranted ? Color.green : Color.red).frame(width: 6, height: 6)
@@ -96,7 +91,6 @@ struct ContentView: View {
                         
                         Spacer()
                         
-                        // Settings Button
                         Button { withAnimation { showSettings.toggle() } } label: {
                             Image(systemName: "slider.horizontal.3").font(.headline)
                                 .foregroundColor(showSettings ? .yellow : .white)
@@ -105,36 +99,35 @@ struct ContentView: View {
                         
                         Button { toggleAspectRatio() } label: {
                             Text(currentAspectRatio.rawValue).font(.footnote.bold()).foregroundColor(.white).padding(8).background(.ultraThinMaterial).clipShape(Capsule())
+                                .overlay(Capsule().stroke(Color.yellow, lineWidth: currentAspectRatio != .fourThree ? 1 : 0))
                         }
                     }
                     .padding(.top, 50).padding(.horizontal)
                     
-                    // --- SETTINGS PANEL ---
+                    // SETTINGS PANEL
                     if showSettings {
                         VStack(spacing: 15) {
                             HStack(spacing: 20) {
                                 ToggleButton(icon: "grid", label: "Grid", isOn: $isGridEnabled)
                                 ToggleButton(icon: "timer", label: "3s Timer", isOn: $isTimerEnabled)
                             }
-                            // Exposure
+                            // Exposure (Available on Front/Back)
                             HStack {
                                 Image(systemName: "sun.max.fill").font(.caption).foregroundColor(.white)
-                                Slider(value: $exposureValue, in: -2...2)
-                                    .tint(.yellow)
+                                Slider(value: $exposureValue, in: -2...2).tint(.yellow)
                                     .onChange(of: exposureValue) { _, val in cameraManager.setExposure(ev: val) }
                                 Text(String(format: "%.1f", exposureValue)).font(.caption.monospacedDigit()).foregroundColor(.white).frame(width: 30)
                             }
-                            // WB
+                            
+                            // Hide unsupported sliders
                             if cameraManager.isWBSupported {
                                 HStack {
                                     Image(systemName: "thermometer").font(.caption).foregroundColor(.white)
-                                    Slider(value: $whiteBalanceValue, in: 3000...8000)
-                                        .tint(.orange)
+                                    Slider(value: $whiteBalanceValue, in: 3000...8000).tint(.orange)
                                         .onChange(of: whiteBalanceValue) { _, val in cameraManager.setWhiteBalance(kelvin: val) }
                                     Text("\(Int(whiteBalanceValue))K").font(.caption.monospacedDigit()).foregroundColor(.white).frame(width: 45)
                                 }
                             }
-                            // Focus
                             if cameraManager.isFocusSupported {
                                 HStack {
                                     Image(systemName: "flower").font(.caption).foregroundColor(.white)
@@ -143,7 +136,6 @@ struct ContentView: View {
                                     Image(systemName: "mountain.2").font(.caption).foregroundColor(.white)
                                 }
                             }
-                            // Torch
                             if cameraManager.isTorchSupported {
                                 HStack {
                                     Image(systemName: "bolt.slash.fill").font(.caption).foregroundColor(.white)
@@ -152,7 +144,6 @@ struct ContentView: View {
                                     Image(systemName: "bolt.fill").font(.caption).foregroundColor(.yellow)
                                 }
                             }
-                            // Reset
                             Button("Reset All") {
                                 exposureValue = 0; whiteBalanceValue = 5500; focusValue = 0.5; torchValue = 0.0
                                 cameraManager.resetSettings()
@@ -170,39 +161,44 @@ struct ContentView: View {
                         ScopeView(advice: advice).padding(.bottom, 10)
                     }
                     
-                    // --- ZOOM CONTROLS ---
-                    ZStack(alignment: .bottom) {
-                        if isZoomDialVisible {
-                            ArcZoomDial(currentZoom: cameraManager.currentZoomFactor, minZoom: cameraManager.minZoomFactor, maxZoom: cameraManager.maxZoomFactor, presets: cameraManager.zoomButtons)
-                                .transition(.opacity).zIndex(1)
-                        }
-                        if !isZoomDialVisible {
-                            HStack(spacing: 20) {
-                                ForEach(cameraManager.zoomButtons, id: \.self) { preset in
-                                    ZoomBubble(label: preset == 0.5 ? ".5" : String(format: "%.0f", preset), isSelected: abs(cameraManager.currentZoomFactor - preset) < 0.1)
-                                        .onTapGesture { withAnimation { cameraManager.setZoomSmooth(preset) } }
+                    // --- ZOOM CONTROLS (Hide if Front Camera has only 1 option) ---
+                    if cameraManager.zoomButtons.count > 1 {
+                        ZStack(alignment: .bottom) {
+                            if isZoomDialVisible {
+                                ArcZoomDial(currentZoom: cameraManager.currentZoomFactor, minZoom: cameraManager.minZoomFactor, maxZoom: cameraManager.maxZoomFactor, presets: cameraManager.zoomButtons)
+                                    .transition(.opacity).zIndex(1)
+                            }
+                            if !isZoomDialVisible {
+                                HStack(spacing: 20) {
+                                    ForEach(cameraManager.zoomButtons, id: \.self) { preset in
+                                        ZoomBubble(label: preset == 0.5 ? ".5" : String(format: "%.0f", preset), isSelected: abs(cameraManager.currentZoomFactor - preset) < 0.1)
+                                            .onTapGesture { withAnimation { cameraManager.setZoomSmooth(preset) } }
+                                    }
                                 }
+                                .padding(.bottom, 20).transition(.opacity).zIndex(2)
                             }
-                            .padding(.bottom, 20).transition(.opacity).zIndex(2)
                         }
+                        .frame(height: 100).contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    if !isZoomDialVisible { withAnimation { isZoomDialVisible = true }; startZoomValue = cameraManager.currentZoomFactor }
+                                    let delta = -value.translation.width / 150.0
+                                    let rawZoom = startZoomValue * pow(2, delta)
+                                    let clampedZoom = max(cameraManager.minZoomFactor, min(cameraManager.maxZoomFactor, rawZoom))
+                                    cameraManager.setZoomInstant(clampedZoom)
+                                }
+                                .onEnded { _ in
+                                    startZoomValue = cameraManager.currentZoomFactor
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { withAnimation { isZoomDialVisible = false } }
+                                }
+                        )
+                    } else {
+                        // Spacer if no zoom controls
+                        Color.clear.frame(height: 100)
                     }
-                    .frame(height: 100).contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { value in
-                                if !isZoomDialVisible { withAnimation { isZoomDialVisible = true }; startZoomValue = cameraManager.currentZoomFactor }
-                                let delta = -value.translation.width / 150.0
-                                let rawZoom = startZoomValue * pow(2, delta)
-                                let clampedZoom = max(cameraManager.minZoomFactor, min(cameraManager.maxZoomFactor, rawZoom))
-                                cameraManager.setZoomInstant(clampedZoom)
-                            }
-                            .onEnded { _ in
-                                startZoomValue = cameraManager.currentZoomFactor
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { withAnimation { isZoomDialVisible = false } }
-                            }
-                    )
                     
-                    // --- BOTTOM BAR (Map - Shutter - Gallery) ---
+                    // --- BOTTOM BAR ---
                     HStack {
                         // MAP
                         Button { showMap = true } label: {
@@ -211,6 +207,17 @@ struct ContentView: View {
                         
                         Spacer()
                         
+                        // NEW: FLIP CAMERA
+                        Button { cameraManager.switchCamera() } label: {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.title3)
+                                .foregroundColor(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.ultraThinMaterial)
+                                .clipShape(Circle())
+                        }
+                        .padding(.trailing, 10)
+
                         // SHUTTER
                         Button { takePhoto() } label: {
                             ZStack {
@@ -221,26 +228,15 @@ struct ContentView: View {
                         
                         Spacer()
                         
-                        // GALLERY BUTTON
-                        Button {
-                            // Open even if capturedImage is nil (to see old photos)
-                            showPhotoReview = true
-                        } label: {
+                        // GALLERY
+                        Button { showPhotoReview = true } label: {
                             if let image = cameraManager.capturedImage {
                                 Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 44, height: 44)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .resizable().scaledToFill().frame(width: 44, height: 44).clipShape(RoundedRectangle(cornerRadius: 8))
                                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white, lineWidth: 2))
                                     .scaleEffect(thumbnailScale)
                             } else {
-                                Image(systemName: "photo.stack")
-                                    .font(.title3)
-                                    .foregroundColor(.white)
-                                    .frame(width: 44, height: 44)
-                                    .background(.ultraThinMaterial)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                Image(systemName: "photo.stack").font(.title3).foregroundColor(.white).frame(width: 44, height: 44).background(.ultraThinMaterial).clipShape(RoundedRectangle(cornerRadius: 8))
                             }
                         }
                     }
@@ -249,41 +245,33 @@ struct ContentView: View {
                 
                 // --- FULL SCREEN OVERLAYS ---
                 if showFlashAnimation { Color.white.ignoresSafeArea().transition(.opacity).zIndex(100) }
-                
                 if cameraManager.isTimerRunning {
                     Color.black.opacity(0.4).ignoresSafeArea()
-                    Text("\(cameraManager.timerCount)")
-                        .font(.system(size: 100, weight: .bold))
-                        .foregroundColor(.white)
-                        .transition(.scale.combined(with: .opacity))
-                        .zIndex(200)
+                    Text("\(cameraManager.timerCount)").font(.system(size: 100, weight: .bold)).foregroundColor(.white).transition(.scale.combined(with: .opacity)).zIndex(200)
                 }
             }
             .navigationDestination(isPresented: $showMap) {
                 MapScreen(locationManager: locationManager, landmark: targetLandmarkBinding)
             }
-            // CHANGED: No arguments here. PhotoReviewView handles fetching itself.
-            .sheet(isPresented: $showPhotoReview) {
-                PhotoReviewView()
-            }
+            .sheet(isPresented: $showPhotoReview) { PhotoReviewView() }
             .onReceive(locationManager.$heading) { _ in updateNavigationLogic() }
             .onReceive(locationManager.$location) { _ in updateNavigationLogic() }
             .onReceive(cameraManager.captureDidFinish) { _ in
                 withAnimation(.easeInOut(duration: 0.1)) { isCapturing = false }
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) { thumbnailScale = 1.2 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    withAnimation { thumbnailScale = 1.0 }
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { withAnimation { thumbnailScale = 1.0 } }
             }
         }
     }
     
     // Actions
     func toggleAspectRatio() {
-        let allCases = AspectRatio.allCases
-        if let currentIndex = allCases.firstIndex(of: currentAspectRatio) {
-            let nextIndex = (currentIndex + 1) % allCases.count
-            currentAspectRatio = allCases[nextIndex]
+        withAnimation {
+            let allCases = AspectRatio.allCases
+            if let currentIndex = allCases.firstIndex(of: currentAspectRatio) {
+                let nextIndex = (currentIndex + 1) % allCases.count
+                currentAspectRatio = allCases[nextIndex]
+            }
         }
     }
     func takePhoto() {
@@ -302,7 +290,7 @@ struct ContentView: View {
     }
 }
 
-// --- 3. Helper Views ---
+// Helpers
 struct ZoomBubble: View {
     let label: String; let isSelected: Bool
     var body: some View {
@@ -314,30 +302,23 @@ struct ZoomBubble: View {
         .frame(width: 38, height: 38)
     }
 }
-
 struct ToggleButton: View {
     let icon: String; let label: String; @Binding var isOn: Bool
     var body: some View {
         Button { isOn.toggle() } label: {
-            HStack {
-                Image(systemName: icon)
-                Text(label).font(.caption.bold())
-            }
-            .foregroundColor(isOn ? .black : .white)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(isOn ? Color.yellow : Color.black.opacity(0.5))
-            .cornerRadius(8)
+            HStack { Image(systemName: icon); Text(label).font(.caption.bold()) }
+                .foregroundColor(isOn ? .black : .white).padding(.horizontal, 10).padding(.vertical, 6)
+                .background(isOn ? Color.yellow : Color.black.opacity(0.5)).cornerRadius(8)
         }
     }
 }
-
 struct GridOverlay: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        path.move(to: CGPoint(x: rect.width / 3, y: 0)); path.addLine(to: CGPoint(x: rect.width / 3, y: rect.height))
-        path.move(to: CGPoint(x: 2 * rect.width / 3, y: 0)); path.addLine(to: CGPoint(x: 2 * rect.width / 3, y: rect.height))
-        path.move(to: CGPoint(x: 0, y: rect.height / 3)); path.addLine(to: CGPoint(x: rect.width, y: rect.height / 3))
-        path.move(to: CGPoint(x: 0, y: 2 * rect.height / 3)); path.addLine(to: CGPoint(x: rect.width, y: 2 * rect.height / 3))
+        path.move(to: CGPoint(x: rect.width/3, y: 0)); path.addLine(to: CGPoint(x: rect.width/3, y: rect.height))
+        path.move(to: CGPoint(x: 2*rect.width/3, y: 0)); path.addLine(to: CGPoint(x: 2*rect.width/3, y: rect.height))
+        path.move(to: CGPoint(x: 0, y: rect.height/3)); path.addLine(to: CGPoint(x: rect.width, y: rect.height/3))
+        path.move(to: CGPoint(x: 0, y: 2*rect.height/3)); path.addLine(to: CGPoint(x: rect.width, y: 2*rect.height/3))
         return path
     }
 }
