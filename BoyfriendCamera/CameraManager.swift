@@ -12,33 +12,17 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     @Published var capturedImage: UIImage?
     
     // Zoom State
-    @Published var minZoomFactor: CGFloat = 1.0
+    @Published var minZoomFactor: CGFloat = 0.5
     @Published var maxZoomFactor: CGFloat = 15.0
     @Published var currentZoomFactor: CGFloat = 1.0
     
-    enum BackLens {
-        case ultraWide
-        case wide
-        case tele
-    }
-    private var preferredLens: BackLens = .wide
-    
-    // Smooth zoom control
-    private let zoomRampRate: Float = 8.0 // higher = faster
-    private let handoffDownThreshold: CGFloat = 0.85 // when going down, start handoff near 0.85
-    private let handoffUpThreshold: CGFloat = 0.65   // when going up from 0.5, finish handoff after 0.65
-    private var isSwitchingLens = false
+    // FIXED: Hardcoded buttons exactly as you requested
+    @Published var zoomButtons: [CGFloat] = [0.5, 1.0, 2.0, 4.0]
 
-    // Telephoto boundaries (UI factors) derived from hardware switch-over; filled in setup
-    private var telephotoThresholds: [CGFloat] = [] // e.g., [3.0, 5.0]
-    private let teleHandoffPadding: CGFloat = 0.2    // hysteresis around thresholds
-
-    // LENS SCALING
-    // Native 1.0 is often the UltraWide (0.5x). This scaler fixes that.
-    private var zoomScaler: CGFloat = 1.0
-
-    // NEW: The list of buttons to show in UI (e.g. .5, 1, 3, 5)
-    @Published var zoomButtons: [CGFloat] = [1.0]
+    // SCALER: This performs the "Divide by 2" logic in reverse.
+    // UI says 0.5 -> We tell camera "Go to Native 1.0"
+    // UI says 1.0 -> We tell camera "Go to Native 2.0"
+    private var zoomScaler: CGFloat = 2.0
 
     let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "cameraQueue")
@@ -49,9 +33,8 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     private var deviceInput: AVCaptureDeviceInput?
     private let bodyPoseRequest = VNDetectHumanBodyPoseRequest()
     
-    // Capture State
     private var pendingLocation: CLLocation?
-    private var pendingAspectRatio: CGFloat = 4.0/3.0 // Default to full sensor
+    private var pendingAspectRatio: CGFloat = 4.0/3.0
     
     let captureDidFinish = PassthroughSubject<Void, Never>()
 
@@ -60,198 +43,88 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         checkPermissions()
     }
 
-    // MARK: - ZOOM LOGIC (Dynamic)
+    // MARK: - ZOOM LOGIC
     
     func setZoom(_ uiFactor: CGFloat) {
         sessionQueue.async {
-            // If we are in the middle of a lens switch, ignore new requests briefly
-            if self.isSwitchingLens { return }
             guard let device = self.activeDevice else { return }
-
-            var targetUI = max(0.5, uiFactor)
-
-            // Telephoto handoff logic
-            if let tele = self.telephotoTarget(for: targetUI) {
-                if tele.shouldSwitch {
-                    self.isSwitchingLens = true
-                    switch tele.targetLens {
-                    case .tele:
-                        self.switchToTelephotoIfAvailable(targetUIZoom: tele.snapUI)
-                    case .wide:
-                        self.switchToWideIfAvailable(targetUIZoom: tele.snapUI)
-                    default: break
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
-                        self.sessionQueue.async { self.isSwitchingLens = false }
-                    }
-                    return
-                }
-            }
-
-            // Smooth lens handoff with hysteresis around ~0.75x
-            switch self.preferredLens {
-            case .wide:
-                // If user drags below handoffDownThreshold, first ramp wide to ~0.9 native, then switch
-                if targetUI <= self.handoffDownThreshold {
-                    self.isSwitchingLens = true
-                    // 1) Ramp current lens close to its minimum for a smoother visual before switch
-                    do {
-                        try device.lockForConfiguration()
-                        let preSwitchNative = max(device.minAvailableVideoZoomFactor, min(0.95 * self.zoomScaler, device.maxAvailableVideoZoomFactor))
-                        device.ramp(toVideoZoomFactor: preSwitchNative, withRate: self.zoomRampRate)
-                        device.unlockForConfiguration()
-                    } catch {
-                        print("Pre-switch ramp error: \(error)")
-                    }
-                    // 2) Switch to ultra-wide and ramp to 0.5 smoothly
-                    self.switchToUltraWideIfAvailable()
-                    // Small delay to allow input reconfiguration, then set 0.5
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
-                        self.sessionQueue.async {
-                            self.isSwitchingLens = false
-                            self.setZoom(0.5)
-                        }
-                    }
-                    return
-                }
-            case .ultraWide:
-                // If user drags above handoffUpThreshold, switch back to wide at ~1.0 smoothly
-                if targetUI >= self.handoffUpThreshold {
-                    self.isSwitchingLens = true
-                    self.switchToWideIfAvailable(targetUIZoom: max(1.0, targetUI))
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
-                        self.sessionQueue.async { self.isSwitchingLens = false }
-                    }
-                    return
-                }
-            default:
-                break
-            }
-
-            // Continuous ramp on the current active device
-            let nativeFactor = targetUI * self.zoomScaler
+            
+            // MATH: UI 0.5 * 2.0 = Native 1.0 (Ultra Wide)
+            let nativeFactor = uiFactor * self.zoomScaler
+            
             do {
                 try device.lockForConfiguration()
-                let clamped = max(device.minAvailableVideoZoomFactor, min(nativeFactor, device.maxAvailableVideoZoomFactor))
-                device.ramp(toVideoZoomFactor: clamped, withRate: self.zoomRampRate)
+                let lower = device.minAvailableVideoZoomFactor
+                let upper = device.maxAvailableVideoZoomFactor
+                let clamped = max(lower, min(nativeFactor, upper))
+                
+                device.ramp(toVideoZoomFactor: clamped, withRate: 5.0)
                 device.unlockForConfiguration()
-                DispatchQueue.main.async { self.currentZoomFactor = targetUI }
+                
+                DispatchQueue.main.async { self.currentZoomFactor = uiFactor }
             } catch {
                 print("Zoom error: \(error)")
             }
         }
     }
 
-    // Decide if we should switch to telephoto for a target UI zoom
-    private func telephotoTarget(for ui: CGFloat) -> (shouldSwitch: Bool, targetLens: BackLens, snapUI: CGFloat)? {
-        guard !telephotoThresholds.isEmpty else { return nil }
-        // Sort ascending thresholds like [3.0, 5.0]
-        let thresholds = telephotoThresholds.sorted()
-        if preferredLens == .tele {
-            // If we are tele and user drags below the lowest threshold - padding, switch back to wide
-            if ui < (thresholds.first! - teleHandoffPadding) { return (true, .wide, max(1.0, ui)) }
-            return (false, .tele, ui)
-        } else if preferredLens == .wide || preferredLens == .ultraWide {
-            // If user goes above any threshold + padding, switch to tele and snap near that threshold
-            for t in thresholds.reversed() {
-                if ui > (t + teleHandoffPadding) { return (true, .tele, t) }
-            }
-            return (false, preferredLens, ui)
-        }
-        return nil
-    }
-
-    // MARK: - CAPTURE LOGIC (With Cropping)
+    // MARK: - CAPTURE
     
-    // Updated to accept Aspect Ratio
     func capturePhoto(location: CLLocation?, aspectRatioValue: CGFloat) {
         AudioServicesPlaySystemSound(1108)
-        
         pendingLocation = location
         pendingAspectRatio = aspectRatioValue
         
         sessionQueue.async {
-            // Ensure we are using the full sensor
             if let connection = self.photoOutput.connection(with: .video) {
                 connection.videoOrientation = .portrait
             }
-            
             let settings = AVCapturePhotoSettings()
-            settings.isHighResolutionPhotoEnabled = true
-            // Max quality
-            if let availableType = settings.availablePreviewPhotoPixelFormatTypes.first {
-                settings.previewPhotoFormat = [kCVPixelBufferPixelFormatTypeKey as String: availableType]
-            }
             self.photoOutput.capturePhoto(with: settings, delegate: self)
         }
     }
     
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        guard let data = photo.fileDataRepresentation(),
-              let originalImage = UIImage(data: data) else { return }
-        
-        // 1. CROP THE IMAGE
+        guard let data = photo.fileDataRepresentation(), let originalImage = UIImage(data: data) else { return }
         let croppedImage = cropToRatio(originalImage, ratio: pendingAspectRatio)
-        
         DispatchQueue.main.async { self.capturedImage = croppedImage }
-        
-        // 2. SAVE (The cropped version)
         if let jpegData = croppedImage.jpegData(compressionQuality: 1.0) {
             saveToCustomAlbum(imageData: jpegData, location: pendingLocation)
         }
-        
         DispatchQueue.main.async { self.captureDidFinish.send(()) }
     }
     
-    // Helper: Physical Crop
     private func cropToRatio(_ image: UIImage, ratio: CGFloat) -> UIImage {
-        // Calculate crop rect
-        let originalWidth = image.size.width
-        let originalHeight = image.size.height
-        let currentRatio = originalWidth / originalHeight
-        
-        var newWidth = originalWidth
-        var newHeight = originalHeight
-        
-        if currentRatio > ratio {
-            // Image is too wide, trim width
-            newWidth = originalHeight * ratio
-        } else {
-            // Image is too tall, trim height
-            newHeight = originalWidth / ratio
-        }
-        
-        let x = (originalWidth - newWidth) / 2.0
-        let y = (originalHeight - newHeight) / 2.0
-        
-        // Perform Crop
-        guard let cgImage = image.cgImage?.cropping(to: CGRect(x: x, y: y, width: newWidth, height: newHeight)) else {
-            return image
-        }
-        
-        return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
+        let w = image.size.width
+        let h = image.size.height
+        let currentRatio = w / h
+        var newW = w
+        var newH = h
+        if currentRatio > ratio { newW = h * ratio } else { newH = w / ratio }
+        let x = (w - newW) / 2.0
+        let y = (h - newH) / 2.0
+        guard let cg = image.cgImage?.cropping(to: CGRect(x: x, y: y, width: newW, height: newH)) else { return image }
+        return UIImage(cgImage: cg, scale: image.scale, orientation: image.imageOrientation)
     }
 
     private func saveToCustomAlbum(imageData: Data, location: CLLocation?) {
-        // (Use the exact same robust album code provided in the previous turn)
         PHPhotoLibrary.requestAuthorization { status in
             guard status == .authorized || status == .limited else { return }
-            let albumName = "Boyfriend Camera"
-            var albumPlaceholder: PHObjectPlaceholder?
+            let name = "Boyfriend Camera"
             let fetchOptions = PHFetchOptions()
-            fetchOptions.predicate = NSPredicate(format: "title = %@", albumName)
+            fetchOptions.predicate = NSPredicate(format: "title = %@", name)
             let collection = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
             
-            if let existingAlbum = collection.firstObject {
-                self.saveAsset(data: imageData, location: location, to: existingAlbum)
+            if let album = collection.firstObject {
+                self.saveAsset(data: imageData, location: location, to: album)
             } else {
+                var placeholder: PHObjectPlaceholder?
                 PHPhotoLibrary.shared().performChanges({
-                    let createRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumName)
-                    albumPlaceholder = createRequest.placeholderForCreatedAssetCollection
+                    let req = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: name)
+                    placeholder = req.placeholderForCreatedAssetCollection
                 }, completionHandler: { success, _ in
-                    if success, let placeholder = albumPlaceholder {
-                        let newCollection = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [placeholder.localIdentifier], options: nil).firstObject
-                        if let album = newCollection {
+                    if success, let id = placeholder?.localIdentifier {
+                        if let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil).firstObject {
                             self.saveAsset(data: imageData, location: location, to: album)
                         }
                     }
@@ -262,157 +135,78 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     
     private func saveAsset(data: Data, location: CLLocation?, to album: PHAssetCollection) {
         PHPhotoLibrary.shared().performChanges {
-            let creationRequest = PHAssetCreationRequest.forAsset()
-            creationRequest.addResource(with: .photo, data: data, options: nil)
-            creationRequest.location = location
-            guard let addAssetRequest = PHAssetCollectionChangeRequest(for: album) else { return }
-            addAssetRequest.addAssets([creationRequest.placeholderForCreatedAsset!] as NSArray)
+            let req = PHAssetCreationRequest.forAsset()
+            req.addResource(with: .photo, data: data, options: nil)
+            req.location = location
+            guard let albumReq = PHAssetCollectionChangeRequest(for: album) else { return }
+            albumReq.addAssets([req.placeholderForCreatedAsset!] as NSArray)
         }
     }
 
-    // MARK: - HARDWARE DETECTION (The "Real" 1x and 5x Fix)
+    // MARK: - HARDWARE SETUP
 
     private func setupCamera() {
         session.beginConfiguration()
-        // FIX: Use .photo preset. This uses the full 4:3 sensor, not the 16:9 video crop.
         session.sessionPreset = .photo
         
-        // 1. Discovery
-        let deviceTypes: [AVCaptureDevice.DeviceType] = [
-            .builtInTripleCamera,
-            .builtInDualWideCamera,
-            .builtInWideAngleCamera,
-            .builtInUltraWideCamera,
-            .builtInTelephotoCamera
-        ]
-        let discovery = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes, mediaType: .video, position: .back)
-        // Prefer the wide camera device as default
-        let wide = discovery.devices.first(where: { $0.deviceType == .builtInWideAngleCamera })
-        let ultra = discovery.devices.first(where: { $0.deviceType == .builtInUltraWideCamera })
-        let tele = discovery.devices.first(where: { $0.deviceType == .builtInTelephotoCamera })
-        // Fallback to first available
-        let device = wide ?? discovery.devices.first
-        guard let selected = device else { session.commitConfiguration(); return }
-        self.activeDevice = selected
-        self.preferredLens = .wide
-        
-        // 2. Calculate UI-to-native zoom scaler for the selected lens
-        // For wide lens, 1.0 UI should map to native 1.0
-        self.zoomScaler = 1.0
-        
-        // 3. Detect Lens Switch Points (To find 3x vs 5x)
-        let switchOverFactors = selected.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat(truncating: $0) }
-        
-        telephotoThresholds.removeAll()
-        for nativeFactor in switchOverFactors {
-            let uiFactor = nativeFactor / self.zoomScaler
-            if uiFactor > 1.2 {
-                let clean = round(uiFactor)
-                telephotoThresholds.append(clean)
-            }
+        // 1. Force Triple/DualWide to ensure we have the 0.5x lens
+        let deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInTripleCamera, .builtInDualWideCamera]
+        guard let device = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes, mediaType: .video, position: .back).devices.first else {
+            setupStandardCamera() // Fallback if no Pro camera found
+            return
         }
-        // Build buttons from thresholds
-        var buttons: [CGFloat] = []
-        if self.zoomScaler > 1.5 { buttons.append(0.5) }
-        buttons.append(1.0)
-        for t in telephotoThresholds.sorted() { if !buttons.contains(t) { buttons.append(t) } }
-        if !buttons.contains(2.0) && buttons.contains(1.0) { buttons.append(2.0) }
+        self.activeDevice = device
         
-        // Sort
+        // 2. FORCE SCALER TO 2.0
+        self.zoomScaler = 2.0
+        
+        // 3. FORCE BUTTONS (Double check they are set)
         DispatchQueue.main.async {
-            self.zoomButtons = buttons.sorted()
-            self.minZoomFactor = self.zoomButtons.first ?? 1.0
-            self.maxZoomFactor = selected.maxAvailableVideoZoomFactor / self.zoomScaler
+            self.zoomButtons = [0.5, 1.0, 2.0, 4.0]
+            self.minZoomFactor = 0.5
+            // Max native is often ~15. 15 / 2 = 7.5x UI max.
+            self.maxZoomFactor = device.maxAvailableVideoZoomFactor / self.zoomScaler
         }
         
-        // 4. Inputs/Outputs
         do {
-            let input = try AVCaptureDeviceInput(device: selected)
+            let input = try AVCaptureDeviceInput(device: device)
             if session.canAddInput(input) { session.addInput(input) }
             deviceInput = input
         } catch { print("Input Error: \(error)") }
         
         if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
-        if session.canAddOutput(photoOutput) {
-            session.addOutput(photoOutput)
-            photoOutput.isHighResolutionCaptureEnabled = true
-        }
-        
+        if session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
         videoOutput.connection(with: .video)?.videoOrientation = .portrait
         
         session.commitConfiguration()
         session.startRunning()
         
-        // Start at 1.0x (Main Lens)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.setZoom(1.0) }
-    }
-    
-    // MARK: - Lens Switching
-    func switchToUltraWideIfAvailable() {
-        sessionQueue.async {
-            let deviceTypes: [AVCaptureDevice.DeviceType] = [
-                .builtInUltraWideCamera,
-                .builtInDualWideCamera,
-                .builtInTripleCamera
-            ]
-            let discovery = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes, mediaType: .video, position: .back)
-            guard let ultra = discovery.devices.first(where: { $0.deviceType == .builtInUltraWideCamera }) ?? discovery.devices.first else { return }
-            self.switchToDevice(ultra, lens: .ultraWide, uiZoom: 0.5, scaler: 2.0)
-        }
-    }
-
-    func switchToWideIfAvailable(targetUIZoom: CGFloat = 1.0) {
-        sessionQueue.async {
-            let deviceTypes: [AVCaptureDevice.DeviceType] = [
-                .builtInWideAngleCamera,
-                .builtInDualWideCamera,
-                .builtInTripleCamera
-            ]
-            let discovery = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes, mediaType: .video, position: .back)
-            guard let wide = discovery.devices.first(where: { $0.deviceType == .builtInWideAngleCamera }) ?? discovery.devices.first else { return }
-            self.switchToDevice(wide, lens: .wide, uiZoom: targetUIZoom, scaler: 1.0)
+        // 4. Force Start at 1.0x (Main Wide)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            self.setZoom(1.0)
         }
     }
     
-    func switchToTelephotoIfAvailable(targetUIZoom: CGFloat) {
-        sessionQueue.async {
-            let deviceTypes: [AVCaptureDevice.DeviceType] = [
-                .builtInTelephotoCamera,
-                .builtInTripleCamera
-            ]
-            let discovery = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes, mediaType: .video, position: .back)
-            guard let tele = discovery.devices.first(where: { $0.deviceType == .builtInTelephotoCamera }) ?? discovery.devices.first else { return }
-            // For telephoto, UI scale should map so that threshold (e.g., 3x/5x) feels native. Use scaler = 1.0 for UI mapping continuity
-            self.switchToDevice(tele, lens: .tele, uiZoom: targetUIZoom, scaler: 1.0)
-        }
-    }
-
-    private func switchToDevice(_ newDevice: AVCaptureDevice, lens: BackLens, uiZoom: CGFloat, scaler: CGFloat) {
-        session.beginConfiguration()
-        // Remove old input
-        if let input = self.deviceInput { session.removeInput(input) }
+    private func setupStandardCamera() {
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else { return }
+        self.activeDevice = device
+        self.zoomScaler = 1.0
+        DispatchQueue.main.async { self.zoomButtons = [1.0, 2.0] } // Basic options
+        
         do {
-            let input = try AVCaptureDeviceInput(device: newDevice)
+            let input = try AVCaptureDeviceInput(device: device)
             if session.canAddInput(input) { session.addInput(input) }
-            self.deviceInput = input
-            self.activeDevice = newDevice
-            self.preferredLens = lens
-            self.zoomScaler = scaler
-        } catch {
-            print("Switch input error: \(error)")
-        }
+            deviceInput = input
+        } catch { return }
+        
+        if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
+        if session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
+        videoOutput.connection(with: .video)?.videoOrientation = .portrait
+        
         session.commitConfiguration()
-        // Update max/min and apply desired UI zoom after a tiny delay to let the session settle
-        DispatchQueue.main.async {
-            self.minZoomFactor = 0.5
-            self.maxZoomFactor = newDevice.maxAvailableVideoZoomFactor / max(self.zoomScaler, 0.001)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            self.setZoom(uiZoom)
-        }
+        session.startRunning()
     }
     
-    // ... (Boilerplate Permissions/Vision logic same as before) ...
     func checkPermissions() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized: sessionQueue.async { self.setupCamera() }
@@ -427,5 +221,22 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         DispatchQueue.main.async { self.isPersonDetected = (self.bodyPoseRequest.results?.first != nil) }
     }
     
-    func setFocus(point: CGPoint) { /* Same as previous response */ }
+    // Missing focus function restored
+    func setFocus(point: CGPoint) {
+        sessionQueue.async {
+            guard let device = self.activeDevice else { return }
+            do {
+                try device.lockForConfiguration()
+                if device.isFocusPointOfInterestSupported {
+                    device.focusPointOfInterest = point
+                    device.focusMode = .autoFocus
+                }
+                if device.isExposurePointOfInterestSupported {
+                    device.exposurePointOfInterest = point
+                    device.exposureMode = .autoExpose
+                }
+                device.unlockForConfiguration()
+            } catch { print("Focus error: \(error)") }
+        }
+    }
 }
