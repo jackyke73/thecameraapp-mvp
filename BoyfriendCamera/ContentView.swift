@@ -1,7 +1,7 @@
 import SwiftUI
 import CoreLocation
 
-// --- 1. Define Enum OUTSIDE the struct ---
+// --- 1. Aspect Ratio Enum ---
 enum AspectRatio: String, CaseIterable {
     case fourThree = "4:3"
     case sixteenNine = "16:9"
@@ -16,7 +16,7 @@ enum AspectRatio: String, CaseIterable {
     }
 }
 
-// --- 2. Define Struct AFTER the enum ---
+// --- 2. Main View ---
 struct ContentView: View {
     @StateObject var cameraManager = CameraManager()
     @StateObject var locationManager = LocationManager()
@@ -28,7 +28,6 @@ struct ContentView: View {
     @State private var isCapturing = false
     @State private var isZoomDialVisible = false
     
-    // This variable now correctly sees the 'AspectRatio' type defined above
     @State private var currentAspectRatio: AspectRatio = .fourThree
     
     @State var targetLandmark = Landmark(name: "The Campanile", coordinate: CLLocationCoordinate2D(latitude: 37.8720, longitude: -122.2578))
@@ -36,6 +35,9 @@ struct ContentView: View {
     var targetLandmarkBinding: Binding<MapLandmark> {
         Binding(get: { MapLandmark(name: targetLandmark.name, coordinate: targetLandmark.coordinate) }, set: { new in targetLandmark = Landmark(name: new.name, coordinate: new.coordinate) })
     }
+    
+    // Zoom Gesture State
+    @State private var startZoomValue: CGFloat = 1.0
     
     var body: some View {
         NavigationStack {
@@ -88,12 +90,14 @@ struct ContentView: View {
                         ScopeView(advice: advice).padding(.bottom, 10)
                     }
                     
-                    // --- ZOOM CONTROLS ---
+                    // --- UNIFIED ZOOM CONTROL AREA ---
                     ZStack(alignment: .bottom) {
-                        // The Dial
+                        
+                        // 1. The Dial (Visual Only)
                         if isZoomDialVisible {
+                            // Fix: Passing raw value, not binding
                             ArcZoomDial(
-                                currentZoom: Binding(get: { cameraManager.currentZoomFactor }, set: { cameraManager.setZoom($0) }),
+                                currentZoom: cameraManager.currentZoomFactor,
                                 minZoom: cameraManager.minZoomFactor,
                                 maxZoom: cameraManager.maxZoomFactor,
                                 presets: cameraManager.zoomButtons
@@ -102,25 +106,17 @@ struct ContentView: View {
                             .zIndex(1)
                         }
                         
-                        // The Buttons
+                        // 2. The Buttons
                         if !isZoomDialVisible {
                             HStack(spacing: 20) {
                                 ForEach(cameraManager.zoomButtons, id: \.self) { preset in
-                                    Button {
+                                    ZoomBubble(
+                                        label: preset == 0.5 ? ".5" : String(format: "%.0f", preset),
+                                        isSelected: abs(cameraManager.currentZoomFactor - preset) < 0.1
+                                    )
+                                    .onTapGesture {
                                         withAnimation { cameraManager.setZoom(preset) }
-                                    } label: {
-                                        ZStack {
-                                            Circle().fill(Color.black.opacity(0.5))
-                                            if abs(cameraManager.currentZoomFactor - preset) < 0.1 { Circle().stroke(.yellow, lineWidth: 1) }
-                                            
-                                            // Label Logic: .5 for 0.5, 1 for 1.0
-                                            Text(preset == 0.5 ? ".5" : String(format: "%.0f", preset))
-                                                .font(.system(size: 12, weight: .bold))
-                                                .foregroundColor(abs(cameraManager.currentZoomFactor - preset) < 0.1 ? .yellow : .white)
-                                        }
-                                        .frame(width: 38, height: 38)
                                     }
-                                    .simultaneousGesture(LongPressGesture(minimumDuration: 0.2).onEnded { _ in withAnimation { isZoomDialVisible = true } })
                                 }
                             }
                             .padding(.bottom, 20)
@@ -128,8 +124,31 @@ struct ContentView: View {
                             .zIndex(2)
                         }
                     }
+                    // --- MASTER SCROLL GESTURE ---
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                if !isZoomDialVisible {
+                                    withAnimation { isZoomDialVisible = true }
+                                    startZoomValue = cameraManager.currentZoomFactor
+                                }
+                                
+                                // Drag Left -> Increase Zoom
+                                let delta = -value.translation.width / 150.0
+                                let newZoom = startZoomValue * pow(2, delta)
+                                
+                                cameraManager.setZoom(newZoom)
+                            }
+                            .onEnded { _ in
+                                startZoomValue = cameraManager.currentZoomFactor
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    withAnimation { isZoomDialVisible = false }
+                                }
+                            }
+                    )
                     
-                    // Shutter
+                    // BOTTOM SHUTTER
                     HStack {
                         Button { showMap = true } label: {
                             Image(systemName: "map.fill").font(.title3).foregroundColor(.white).frame(width: 44, height: 44).background(.ultraThinMaterial).clipShape(Circle())
@@ -155,9 +174,6 @@ struct ContentView: View {
             .onReceive(locationManager.$heading) { _ in updateNavigationLogic() }
             .onReceive(locationManager.$location) { _ in updateNavigationLogic() }
             .onReceive(cameraManager.captureDidFinish) { _ in isCapturing = false }
-            .onChange(of: isZoomDialVisible) { _, visible in
-                if visible { DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { withAnimation { isZoomDialVisible = false } } }
-            }
         }
     }
     
@@ -180,5 +196,22 @@ struct ContentView: View {
         let smooth = smoother.smooth(rawHeading)
         let advice = PhotoDirector.guideToLandmark(userHeading: smooth, userLocation: userLoc.coordinate, target: targetLandmark)
         withAnimation { currentAdvice = advice }
+    }
+}
+
+// --- 3. Missing Helper View ---
+struct ZoomBubble: View {
+    let label: String
+    let isSelected: Bool
+    
+    var body: some View {
+        ZStack {
+            Circle().fill(Color.black.opacity(0.5))
+            if isSelected { Circle().stroke(.yellow, lineWidth: 1) }
+            Text(label + "x")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(isSelected ? .yellow : .white)
+        }
+        .frame(width: 38, height: 38)
     }
 }
