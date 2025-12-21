@@ -11,18 +11,15 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     @Published var isPersonDetected = false
     @Published var capturedImage: UIImage?
     
-    // Zoom State
+    // Zoom Limits
     @Published var minZoomFactor: CGFloat = 0.5
     @Published var maxZoomFactor: CGFloat = 15.0
     @Published var currentZoomFactor: CGFloat = 1.0
     
-    // FORCED BUTTON LAYOUT
-    @Published var zoomButtons: [CGFloat] = [0.5, 1.0, 2.0, 4.0, 8.0]
+    // Buttons
+    @Published var zoomButtons: [CGFloat] = [0.5, 1.0, 2.0, 4.0]
 
-    // SCALER: On Pro iPhones, Native 1.0 is the UltraWide.
-    // So we must multiply UI Zoom by 2 to get Native Zoom.
-    // UI 0.5 * 2 = Native 1.0 (Ultra)
-    // UI 1.0 * 2 = Native 2.0 (Wide)
+    // Scaler (UI 1.0 = Native 2.0 on Pro phones)
     private var zoomScaler: CGFloat = 2.0
 
     let session = AVCaptureSession()
@@ -44,22 +41,47 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         checkPermissions()
     }
 
-    // MARK: - ZOOM LOGIC (Precision Mode)
+    // MARK: - ZOOM LOGIC (Split into Instant vs Smooth)
     
-    func setZoom(_ uiFactor: CGFloat) {
+    // 1. INSTANT ZOOM (For Dial & Pinch - Zero Latency)
+    func setZoomInstant(_ uiFactor: CGFloat) {
         sessionQueue.async {
             guard let device = self.activeDevice else { return }
             
-            // MATH: UI 1.0 -> Native 2.0
+            // Convert to Native
             let nativeFactor = uiFactor * self.zoomScaler
             
             do {
                 try device.lockForConfiguration()
-                // Clamp to safe limits
+                // Clamp strictly
                 let clamped = max(device.minAvailableVideoZoomFactor, min(nativeFactor, device.maxAvailableVideoZoomFactor))
-                device.ramp(toVideoZoomFactor: clamped, withRate: 5.0)
+                
+                // DIRECT SET (No Ramping)
+                device.videoZoomFactor = clamped
+                
                 device.unlockForConfiguration()
                 
+                DispatchQueue.main.async { self.currentZoomFactor = uiFactor }
+            } catch {
+                print("Zoom error: \(error)")
+            }
+        }
+    }
+    
+    // 2. SMOOTH ZOOM (For Buttons - Cinematic Transition)
+    func setZoomSmooth(_ uiFactor: CGFloat) {
+        sessionQueue.async {
+            guard let device = self.activeDevice else { return }
+            let nativeFactor = uiFactor * self.zoomScaler
+            
+            do {
+                try device.lockForConfiguration()
+                let clamped = max(device.minAvailableVideoZoomFactor, min(nativeFactor, device.maxAvailableVideoZoomFactor))
+                
+                // RAMP (Smooth)
+                device.ramp(toVideoZoomFactor: clamped, withRate: 5.0)
+                
+                device.unlockForConfiguration()
                 DispatchQueue.main.async { self.currentZoomFactor = uiFactor }
             } catch {
                 print("Zoom error: \(error)")
@@ -142,31 +164,25 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         }
     }
 
-    // MARK: - HARDWARE SETUP (Forced 0.5x Base)
+    // MARK: - HARDWARE SETUP
 
     private func setupCamera() {
         session.beginConfiguration()
         session.sessionPreset = .photo
         
-        // 1. FORCE TRIPLE CAMERA (The one with 0.5x base)
         let deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInTripleCamera, .builtInDualWideCamera]
         guard let device = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes, mediaType: .video, position: .back).devices.first else {
-            // Fallback for single lens phones (Scaling 1:1)
             setupStandardCamera()
             return
         }
         self.activeDevice = device
-        
-        // 2. SET SCALER TO 2.0
-        // Because Native 1.0 is UltraWide, we need UI 1.0 to be Native 2.0
         self.zoomScaler = 2.0
         
-        // 3. FORCE BUTTONS (Double check they are set)
+        // Init UI State
         DispatchQueue.main.async {
-            self.zoomButtons = [0.5, 1.0, 2.0, 4.0, 8.0]
-            self.minZoomFactor = 0.5
-            // Max native is often ~15. 15 / 2 = 7.5x UI max.
+            self.minZoomFactor = 0.5 // STRICT LIMIT
             self.maxZoomFactor = device.maxAvailableVideoZoomFactor / self.zoomScaler
+            self.zoomButtons = [0.5, 1.0, 2.0, 4.0]
         }
         
         do {
@@ -182,18 +198,20 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         session.commitConfiguration()
         session.startRunning()
         
-        // 4. Force Start at 1.0x (Main Wide)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            self.setZoom(1.0)
+            self.setZoomInstant(1.0)
         }
     }
     
-    // Fallback for non-Pro phones
     private func setupStandardCamera() {
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else { return }
         self.activeDevice = device
-        self.zoomScaler = 1.0 // 1:1 mapping
-        self.zoomButtons = [1.0, 2.0] // Simplified buttons
+        self.zoomScaler = 1.0
+        DispatchQueue.main.async {
+            self.minZoomFactor = 1.0
+            self.maxZoomFactor = 5.0
+            self.zoomButtons = [1.0, 2.0]
+        }
         
         do {
             let input = try AVCaptureDeviceInput(device: device)
@@ -223,7 +241,6 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         DispatchQueue.main.async { self.isPersonDetected = (self.bodyPoseRequest.results?.first != nil) }
     }
     
-    // Missing focus function restored
     func setFocus(point: CGPoint) {
         sessionQueue.async {
             guard let device = self.activeDevice else { return }

@@ -1,7 +1,7 @@
 import SwiftUI
 import CoreLocation
 
-// --- 1. Aspect Ratio Enum ---
+// --- 1. Enum ---
 enum AspectRatio: String, CaseIterable {
     case fourThree = "4:3"
     case sixteenNine = "16:9"
@@ -56,7 +56,11 @@ struct ContentView: View {
                         .position(x: geo.size.width / 2, y: geo.size.height / 2)
                         .gesture(
                             MagnificationGesture()
-                                .onChanged { val in cameraManager.setZoom(cameraManager.currentZoomFactor * val) }
+                                .onChanged { val in
+                                    // Use Instant Zoom for Pinch
+                                    let newZoom = cameraManager.currentZoomFactor * val
+                                    cameraManager.setZoomInstant(newZoom)
+                                }
                         )
                 }
                 .ignoresSafeArea()
@@ -93,20 +97,20 @@ struct ContentView: View {
                     // --- UNIFIED ZOOM CONTROL AREA ---
                     ZStack(alignment: .bottom) {
                         
-                        // 1. The Dial (Visual Only)
+                        // A. The Dial (Visible ONLY when dragging)
                         if isZoomDialVisible {
-                            // Fix: Passing raw value, not binding
                             ArcZoomDial(
                                 currentZoom: cameraManager.currentZoomFactor,
                                 minZoom: cameraManager.minZoomFactor,
                                 maxZoom: cameraManager.maxZoomFactor,
                                 presets: cameraManager.zoomButtons
                             )
-                            .transition(.opacity)
-                            .zIndex(1)
+                            // Transition: Fade In/Out
+                            .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+                            .zIndex(2)
                         }
                         
-                        // 2. The Buttons
+                        // B. The Buttons (Visible ONLY when NOT dragging)
                         if !isZoomDialVisible {
                             HStack(spacing: 20) {
                                 ForEach(cameraManager.zoomButtons, id: \.self) { preset in
@@ -115,35 +119,46 @@ struct ContentView: View {
                                         isSelected: abs(cameraManager.currentZoomFactor - preset) < 0.1
                                     )
                                     .onTapGesture {
-                                        withAnimation { cameraManager.setZoom(preset) }
+                                        // Tap logic: Just jump, don't show dial
+                                        withAnimation { cameraManager.setZoomSmooth(preset) }
                                     }
                                 }
                             }
-                            .padding(.bottom, 20)
-                            .transition(.opacity)
-                            .zIndex(2)
+                            .padding(.bottom, 30) // Align visually with where dial appears
+                            // Transition: Fade In/Out
+                            .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+                            .zIndex(1)
                         }
                     }
+                    .frame(height: 100) // Fixed height to prevent layout jumps
                     // --- MASTER SCROLL GESTURE ---
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle()) // Capture touches even in empty space
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
+                                // 1. Start Drag: Hide Buttons, Show Dial
                                 if !isZoomDialVisible {
-                                    withAnimation { isZoomDialVisible = true }
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        isZoomDialVisible = true
+                                    }
                                     startZoomValue = cameraManager.currentZoomFactor
                                 }
                                 
-                                // Drag Left -> Increase Zoom
+                                // 2. Calculate Logic
                                 let delta = -value.translation.width / 150.0
-                                let newZoom = startZoomValue * pow(2, delta)
+                                let rawZoom = startZoomValue * pow(2, delta)
+                                let clampedZoom = max(cameraManager.minZoomFactor, min(cameraManager.maxZoomFactor, rawZoom))
                                 
-                                cameraManager.setZoom(newZoom)
+                                // 3. Instant Zoom Update
+                                cameraManager.setZoomInstant(clampedZoom)
                             }
                             .onEnded { _ in
+                                // 4. End Drag: Wait a moment, then Hide Dial, Show Buttons
                                 startZoomValue = cameraManager.currentZoomFactor
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                    withAnimation { isZoomDialVisible = false }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                    withAnimation(.easeInOut(duration: 0.3)) {
+                                        isZoomDialVisible = false
+                                    }
                                 }
                             }
                     )
@@ -199,7 +214,7 @@ struct ContentView: View {
     }
 }
 
-// --- 3. Missing Helper View ---
+// --- 3. Helper View ---
 struct ZoomBubble: View {
     let label: String
     let isSelected: Bool
