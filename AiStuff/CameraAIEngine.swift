@@ -2,6 +2,7 @@ import Foundation
 import Vision
 import CoreML
 import CoreImage
+import ImageIO   // for CGImagePropertyOrientation
 
 // MARK: - AI Output
 struct CameraAIOutput: Equatable {
@@ -45,7 +46,7 @@ final class CameraAIEngine {
         do {
             let config = MLModelConfiguration()
             config.computeUnits = .all
-            let coreML = try CNNEmotions(configuration: config).model
+            let coreML = try CNNEmotions_2(configuration: config).model
             return try VNCoreMLModel(for: coreML)
         } catch {
             print("⚠️ Failed to load CNNEmotions model:", error)
@@ -58,7 +59,7 @@ final class CameraAIEngine {
     private let detectEveryNFrames: Int = 6
 
     private var emotionCounter: Int = 0
-    private let emotionEveryNDetections: Int = 2  // run emotion every 2 detections (i.e. slower)
+    private let emotionEveryNDetections: Int = 2
 
     private var isBusy: Bool = false
 
@@ -68,7 +69,7 @@ final class CameraAIEngine {
     // Smoothing per face
     private var labelBuffers: [UUID: RollingLabelBuffer] = [:]
 
-    // Cache last output so CameraManager can publish only when changed
+    // Cache last output
     private var lastOutput: CameraAIOutput = .init(isPersonDetected: false, peopleCount: 0, expressions: [])
 
     func process(pixelBuffer: CVPixelBuffer,
@@ -80,9 +81,12 @@ final class CameraAIEngine {
         isBusy = true
         defer { isBusy = false }
 
-        autoreleasepool {
+        // ✅ IMPORTANT: return the autoreleasepool value (typed as CameraAIOutput?)
+        return autoreleasepool { () -> CameraAIOutput? in
             do {
-                try visionHandler.perform([poseRequest, faceRectRequest], on: pixelBuffer, orientation: orientation)
+                try visionHandler.perform([poseRequest, faceRectRequest],
+                                          on: pixelBuffer,
+                                          orientation: orientation)
             } catch {
                 return nil
             }
@@ -94,18 +98,19 @@ final class CameraAIEngine {
             let peopleCount = max(poseCount, faceCount)
             let isDetected = peopleCount > 0
 
-            // Decide whether to run expensive emotion inference this tick
+            // run emotion less frequently (expensive)
             var exprs: [String] = lastOutput.expressions
             emotionCounter += 1
             if emotionCounter % emotionEveryNDetections == 0 {
-                exprs = classifyExpressions(pixelBuffer: pixelBuffer, faces: faces, orientation: orientation)
+                exprs = classifyExpressions(pixelBuffer: pixelBuffer,
+                                            faces: faces,
+                                            orientation: orientation)
             }
 
             let output = CameraAIOutput(isPersonDetected: isDetected,
-                                       peopleCount: peopleCount,
-                                       expressions: exprs)
+                                        peopleCount: peopleCount,
+                                        expressions: exprs)
 
-            // only return if changed (to reduce UI churn)
             if output != lastOutput {
                 lastOutput = output
                 return output
@@ -120,13 +125,11 @@ final class CameraAIEngine {
                                      faces: [VNFaceObservation],
                                      orientation: CGImagePropertyOrientation) -> [String] {
 
+        guard !faces.isEmpty else { return [] }
         guard let model = expressionModel else {
-            if faces.isEmpty { return [] }
             return Array(repeating: "Unknown", count: min(faces.count, maxFacesToClassify))
         }
-        guard !faces.isEmpty else { return [] }
 
-        // Biggest faces first
         let targets = faces.sorted { area($0.boundingBox) > area($1.boundingBox) }
         let chosen = Array(targets.prefix(maxFacesToClassify))
 
@@ -169,7 +172,6 @@ final class CameraAIEngine {
                   let top = obs.first else { return }
             bestLabel = top.identifier
             bestConf = top.confidence
-            // print("EXP:", bestLabel, bestConf) // uncomment to debug
         }
 
         request.imageCropAndScaleOption = VNImageCropAndScaleOption.scaleFill
@@ -192,7 +194,6 @@ final class CameraAIEngine {
         let width = ciImage.extent.width
         let height = ciImage.extent.height
 
-        // Vision bbox normalized, origin bottom-left
         let x = faceBoundingBox.origin.x * width
         let y = (1.0 - faceBoundingBox.origin.y - faceBoundingBox.size.height) * height
         let w = faceBoundingBox.size.width * width
@@ -207,7 +208,6 @@ final class CameraAIEngine {
     private func normalizeLabel(_ raw: String, confidence: Float) -> String {
         let id = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
-        // bump this up so it doesn’t spam “Surprise”
         if confidence < 0.60 { return "Neutral" }
 
         if id.contains("happy") { return "Happy" }
@@ -222,6 +222,6 @@ final class CameraAIEngine {
     }
 
     private func area(_ bb: CGRect) -> CGFloat {
-        return max(0, bb.width * bb.height)
+        max(0, bb.width * bb.height)
     }
 }

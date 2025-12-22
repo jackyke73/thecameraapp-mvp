@@ -3,7 +3,7 @@ import AVFoundation
 import UIKit
 
 struct CameraPreview: UIViewRepresentable {
-    @ObservedObject var cameraManager: CameraManager
+    let cameraManager: CameraManager
 
     // ✅ NEW: notify SwiftUI that user tapped the viewfinder
     var onUserInteraction: (() -> Void)? = nil

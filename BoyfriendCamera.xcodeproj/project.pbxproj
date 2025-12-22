@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		EAF978742EF934CE00B221C1 /* CNNEmotions_2.mlmodel in Sources */ = {isa = PBXBuildFile; fileRef = EAF978732EF934CE00B221C1 /* CNNEmotions_2.mlmodel */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		EA9331682ECEB77100AD97A9 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		EA93315A2ECEB76F00AD97A9 /* BoyfriendCamera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BoyfriendCamera.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA9331672ECEB77100AD97A9 /* BoyfriendCameraTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BoyfriendCameraTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA9331712ECEB77100AD97A9 /* BoyfriendCameraUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BoyfriendCameraUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EAF978732EF934CE00B221C1 /* CNNEmotions_2.mlmodel */ = {isa = PBXFileReference; lastKnownFileType = file.mlmodel; path = CNNEmotions_2.mlmodel; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -171,6 +176,7 @@
 			isa = PBXGroup;
 			children = (
 				EA93315A2ECEB76F00AD97A9 /* BoyfriendCamera.app */,
+				EAF978732EF934CE00B221C1 /* CNNEmotions_2.mlmodel */,
 				EA9331672ECEB77100AD97A9 /* BoyfriendCameraTests.xctest */,
 				EA9331712ECEB77100AD97A9 /* BoyfriendCameraUITests.xctest */,
 			);
@@ -323,6 +329,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EAF978742EF934CE00B221C1 /* CNNEmotions_2.mlmodel in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
