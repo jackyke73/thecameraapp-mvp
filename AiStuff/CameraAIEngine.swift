@@ -50,7 +50,7 @@ final class CameraAIEngine {
     }()
 
     private var frameCounter: Int = 0
-    private let detectEveryNFrames: Int = 4
+    private let detectEveryNFrames: Int = 1
 
     private var emotionCounter: Int = 0
     private let emotionEveryNDetections: Int = 2
