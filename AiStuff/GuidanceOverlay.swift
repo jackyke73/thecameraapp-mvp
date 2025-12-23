@@ -1,56 +1,41 @@
 import SwiftUI
 
 struct GuidanceOverlay: View {
-    let nosePoint: CGPoint?          // normalized 0...1
-    let targetPoint: CGPoint         // normalized 0...1
-    let isActive: Bool
+    let nosePoint: CGPoint?      // normalized 0..1
+    let targetPoint: CGPoint     // normalized 0..1
+    let isAligned: Bool
 
     var body: some View {
         GeometryReader { geo in
-            let size = geo.size
+            let w = geo.size.width
+            let h = geo.size.height
 
-            // convert normalized -> pixel
-            let target = CGPoint(x: targetPoint.x * size.width,
-                                 y: targetPoint.y * size.height)
+            let target = CGPoint(x: targetPoint.x * w, y: targetPoint.y * h)
 
-            let nose = nosePoint.map { p in
-                CGPoint(x: p.x * size.width,
-                        y: p.y * size.height)
-            }
+            // target ring
+            Circle()
+                .stroke(isAligned ? Color.green : Color.white, lineWidth: 2)
+                .frame(width: 46, height: 46)
+                .position(target)
 
-            ZStack {
-                if isActive, let nose = nose {
-                    // dashed line from nose -> target
-                    Path { path in
-                        path.move(to: nose)
-                        path.addLine(to: target)
-                    }
-                    .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [6, 6]))
-                    .foregroundColor(.white.opacity(0.9))
+            if let nose = nosePoint {
+                let n = CGPoint(x: nose.x * w, y: nose.y * h)
 
-                    // nose dot (light)
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 10, height: 10)
-                        .position(nose)
-                        .shadow(radius: 6)
-
-                    // target ring
-                    ZStack {
-                        Circle()
-                            .stroke(Color.white.opacity(0.9), lineWidth: 2)
-                            .frame(width: 40, height: 40)
-                        Circle()
-                            .fill(Color.white.opacity(0.9))
-                            .frame(width: 6, height: 6)
-                    }
-                    .position(target)
-                    .shadow(radius: 6)
+                // dotted line
+                Path { p in
+                    p.move(to: n)
+                    p.addLine(to: target)
                 }
+                .stroke(isAligned ? Color.green : Color.white,
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [6, 6]))
+
+                // nose dot
+                Circle()
+                    .fill(isAligned ? Color.green : Color.white)
+                    .frame(width: 10, height: 10)
+                    .position(n)
             }
-            .animation(.easeOut(duration: 0.15), value: nosePoint?.x ?? 0)
-            .animation(.easeOut(duration: 0.15), value: nosePoint?.y ?? 0)
         }
-        .allowsHitTesting(false) // ✅ do not block taps/gestures
+        .allowsHitTesting(false)
     }
 }

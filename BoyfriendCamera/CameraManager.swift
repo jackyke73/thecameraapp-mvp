@@ -11,19 +11,27 @@ import ImageIO
 final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapturePhotoCaptureDelegate {
 
     @Published var permissionGranted = false
+    
+    // Guidance
+    @Published var nosePointInPreview: CGPoint? = nil
+    @Published var targetPointDevice: CGPoint = CGPoint(x: 0.5, y: 0.38) // capture-device normalized
+    @Published var targetPointInPreview: CGPoint? = nil
+    @Published var isGuidanceActive: Bool = false
+    @Published var isAligned: Bool = false
+    
     // Guidance (normalized 0...1 in preview space)
     @Published var nosePoint: CGPoint? = nil
     @Published var targetPoint: CGPoint = CGPoint(x: 0.5, y: 0.38)   // tweak this
-    @Published var isGuidanceActive: Bool = false
 
     // AI state
     @Published var isAIFeaturesEnabled: Bool = true
     @Published var isPersonDetected = false
     @Published var peopleCount: Int = 0
     @Published var expressions: [String] = []
+    private var lastNoseSeenAt: Date = .distantPast
+    private let noseHoldSeconds: TimeInterval = 0.4
 
     // ✅ draw-ready nose point in preview coordinates (points)
-    @Published var nosePointInPreview: CGPoint?
 
     @Published var capturedImage: UIImage?
 
@@ -86,6 +94,11 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         videoOutput.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
         ]
+    }
+    
+    private func fix90Rotation(_ p: CGPoint) -> CGPoint {
+        // Corrects: right->down, up->right
+        CGPoint(x: 1.0 - p.y, y: p.x)
     }
 
     private func configurationDevice() -> AVCaptureDevice? {
@@ -453,7 +466,7 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         if let conn = videoOutput.connection(with: .video) {
             conn.videoOrientation = .portrait
             conn.automaticallyAdjustsVideoMirroring = false
-            conn.isVideoMirrored = (currentPosition == .front)
+            conn.isVideoMirrored = false
         }
 
         session.commitConfiguration()
@@ -509,31 +522,37 @@ final class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         guard isAIFeaturesEnabled else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        let mirrored = (currentPosition == .front)
+        // IMPORTANT: don't let the engine mirror; we do it once here
+        let previewIsMirrored = (currentPosition == .front)
 
         if let out = aiEngine.process(pixelBuffer: pixelBuffer,
                                       orientation: .right,
-                                      isMirrored: mirrored) {
+                                      isMirrored: previewIsMirrored) {
 
             DispatchQueue.main.async {
                 self.isPersonDetected = out.isPersonDetected
                 self.peopleCount = out.peopleCount
                 self.expressions = out.expressions
 
-                // device-normalized (0..1)
-                self.nosePoint = out.nosePoint
+                if let p = out.nosePoint {
+                    self.nosePoint = p
+                    self.lastNoseSeenAt = Date()
+                } else {
+                    // don't instantly erase; hold briefly
+                    if Date().timeIntervalSince(self.lastNoseSeenAt) > self.noseHoldSeconds {
+                        self.nosePoint = nil
+                    }
+                }
 
-                // convert to actual preview pixels for drawing (this fixes “flipped / I don’t know where it is”)
-                if let nose = out.nosePoint, let layer = self.previewLayer {
-                    self.nosePointInPreview = layer.layerPointConverted(fromCaptureDevicePoint: nose)
-
-                    // also compute guidance in the SAME coordinate system (device normalized)
+                if let nose = self.nosePoint {
                     let dx = nose.x - self.targetPoint.x
                     let dy = nose.y - self.targetPoint.y
-                    let dist = sqrt(dx * dx + dy * dy)
-                    self.isGuidanceActive = dist > 0.035
+                    let dist = sqrt(dx*dx + dy*dy)
+
+                    self.isAligned = dist <= 0.035
+                    self.isGuidanceActive = !self.isAligned
                 } else {
-                    self.nosePointInPreview = nil
+                    self.isAligned = false
                     self.isGuidanceActive = false
                 }
             }

@@ -102,7 +102,7 @@ struct ContentView: View {
                             GuidanceOverlay(
                                 nosePoint: cameraManager.nosePoint,
                                 targetPoint: cameraManager.targetPoint,
-                                isActive: cameraManager.isGuidanceActive
+                                isAligned: cameraManager.isAligned
                             )
                         }
                         .frame(width: width, height: sensorHeight)
