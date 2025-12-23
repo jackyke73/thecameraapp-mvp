@@ -47,7 +47,7 @@ struct ContentView: View {
     @State private var isGridEnabled = false
     @State private var isTimerEnabled = false
 
-    // ✅ NEW: Landmark lock toggle (your “auto lock to target” feature)
+    // ✅ Landmark lock toggle
     @State private var isLandmarkLockEnabled = true
 
     // ✅ Throttle landmark guidance updates so UI stays responsive
@@ -69,107 +69,92 @@ struct ContentView: View {
     @State private var startZoomValue: CGFloat = 1.0
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
+        GeometryReader { outerGeo in
+            let topSafe = outerGeo.safeAreaInsets.top
 
-                // 1) CAMERA CONTAINER
-                GeometryReader { geo in
-                    let width = geo.size.width
+            NavigationStack {
+                ZStack {
+                    Color.black.ignoresSafeArea()
 
-                    let sensorRatio: CGFloat = 4.0 / 3.0
-                    let sensorHeight = width * sensorRatio
-                    let targetHeight = width * currentAspectRatio.value
+                    // 1) CAMERA CONTAINER
+                    GeometryReader { geo in
+                        let width = geo.size.width
 
-                    // Scaling Logic
-                    let scaleFactor: CGFloat = currentAspectRatio.value > sensorRatio
-                    ? (currentAspectRatio.value / sensorRatio)
-                    : 1.0
+                        let sensorRatio: CGFloat = 4.0 / 3.0
+                        let sensorHeight = width * sensorRatio
+                        let targetHeight = width * currentAspectRatio.value
 
-                    ZStack {
-                        CameraPreview(cameraManager: cameraManager)
-                            .frame(width: width, height: sensorHeight)
-                            .scaleEffect(scaleFactor)
+                        // Scaling Logic
+                        let scaleFactor: CGFloat = currentAspectRatio.value > sensorRatio
+                        ? (currentAspectRatio.value / sensorRatio)
+                        : 1.0
 
-                        if isGridEnabled {
-                            GridOverlay()
-                                .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                                .frame(width: width, height: targetHeight)
-                        }
-                    }
-                    .frame(width: width, height: targetHeight)
-                    .clipped()
-                    .position(x: geo.size.width / 2, y: geo.size.height / 2)
-                    .gesture(
-                        MagnificationGesture()
-                            .onChanged { val in
-                                // Disable pinch zoom for front
-                                guard cameraManager.currentPosition == .back else { return }
-                                cameraManager.setZoomInstant(cameraManager.currentZoomFactor * val)
+                        ZStack {
+                            CameraPreview(cameraManager: cameraManager)
+                                .frame(width: width, height: sensorHeight)
+                                .scaleEffect(scaleFactor)
+
+                            if isGridEnabled {
+                                GridOverlay()
+                                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                                    .frame(width: width, height: targetHeight)
                             }
-                    )
-                }
-                .ignoresSafeArea()
+                        }
+                        .frame(width: width, height: targetHeight)
+                        .clipped()
+                        .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                        .gesture(
+                            MagnificationGesture()
+                                .onChanged { val in
+                                    // Disable pinch zoom for front
+                                    guard cameraManager.currentPosition == .back else { return }
+                                    cameraManager.setZoomInstant(cameraManager.currentZoomFactor * val)
+                                }
+                        )
+                    }
+                    .ignoresSafeArea()
 
-                // ✅ 2) AI HUD (floating, non-overlapping with top bar)
-                VStack {
-                    HStack {
-                        AIDebugHUD(cameraManager: cameraManager)
-                            .padding(.leading, 14)
-                            // Push down so it "floats" on top of the preview and
-                            // never collides with the top banner buttons.
-                            .padding(.top, 132)
+                    // ✅ 2) AI HUD (floating, notch-safe; hides while Settings is open)
+                    VStack {
+                        HStack {
+                            AIDebugHUD(cameraManager: cameraManager)
+                                .padding(.leading, 14)
+                                .padding(.top, topSafe + 92)
+                                .opacity(showSettings ? 0 : 1)
+                            Spacer()
+                        }
                         Spacer()
                     }
-                    Spacer()
-                }
-                .zIndex(500)
+                    .ignoresSafeArea(edges: .top)
+                    .zIndex(500)
 
-                // 3) LANDMARK OVERLAYS (only when lock enabled)
-                if isLandmarkLockEnabled, let advice = currentAdvice {
-                    FloatingTargetView(angleDiff: advice.turnAngle, isLocked: abs(advice.turnAngle) < 3)
-                        .zIndex(50)
-                }
+                    // 3) LANDMARK OVERLAYS (only when lock enabled)
+                    if isLandmarkLockEnabled, let advice = currentAdvice {
+                        FloatingTargetView(angleDiff: advice.turnAngle, isLocked: abs(advice.turnAngle) < 3)
+                            .zIndex(50)
+                    }
 
-                // 4) UI CONTROLS
-                VStack {
-                    // --- TOP BAR ---
-                    HStack(alignment: .top) {
-                        // Map button (left)
-                        Button { showMap = true } label: {
-                            Image(systemName: "map.fill")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .padding(10)
-                                .background(.ultraThinMaterial)
-                                .clipShape(Circle())
-                        }
-
-                        // GPS + AI ON/OFF stacked (right below GPS)
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(locationManager.permissionGranted ? Color.green : Color.red)
-                                    .frame(width: 6, height: 6)
-                                Text(locationManager.permissionGranted ? "GPS" : "NO GPS")
-                                    .font(.system(size: 10, weight: .bold))
+                    // 4) UI CONTROLS
+                    VStack {
+                        // --- TOP BAR ---
+                        HStack(alignment: .top) {
+                            // Map button (top-left)
+                            Button { showMap = true } label: {
+                                Image(systemName: "map.fill")
+                                    .font(.headline)
                                     .foregroundColor(.white)
-                                    .lineLimit(1)
-                                    .fixedSize(horizontal: true, vertical: false)
+                                    .padding(10)
+                                    .background(.ultraThinMaterial)
+                                    .clipShape(Circle())
                             }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.black.opacity(0.4))
-                            .cornerRadius(12)
 
-                            Button {
-                                cameraManager.isAIFeaturesEnabled.toggle()
-                            } label: {
+                            // GPS + AI ON/OFF (AI toggle right below GPS)
+                            VStack(alignment: .leading, spacing: 6) {
                                 HStack(spacing: 6) {
                                     Circle()
-                                        .fill(cameraManager.isAIFeaturesEnabled ? Color.green : Color.gray)
+                                        .fill(locationManager.permissionGranted ? Color.green : Color.red)
                                         .frame(width: 6, height: 6)
-                                    Text(cameraManager.isAIFeaturesEnabled ? "AI ON" : "AI OFF")
+                                    Text(locationManager.permissionGranted ? "GPS" : "NO GPS")
                                         .font(.system(size: 10, weight: .bold))
                                         .foregroundColor(.white)
                                         .lineLimit(1)
@@ -179,312 +164,337 @@ struct ContentView: View {
                                 .padding(.vertical, 4)
                                 .background(Color.black.opacity(0.4))
                                 .cornerRadius(12)
+
+                                Button {
+                                    cameraManager.isAIFeaturesEnabled.toggle()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Circle()
+                                            .fill(cameraManager.isAIFeaturesEnabled ? Color.green : Color.gray)
+                                            .frame(width: 6, height: 6)
+                                        Text(cameraManager.isAIFeaturesEnabled ? "AI ON" : "AI OFF")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .lineLimit(1)
+                                            .fixedSize(horizontal: true, vertical: false)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.black.opacity(0.4))
+                                    .cornerRadius(12)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
+                            .padding(.top, 2)
+
+                            Spacer()
+
+                            // Settings Button (kept where it was)
+                            Button { withAnimation { showSettings.toggle() } } label: {
+                                Image(systemName: "slider.horizontal.3")
+                                    .font(.headline)
+                                    .foregroundColor(showSettings ? .yellow : .white)
+                                    .padding(10)
+                                    .background(.ultraThinMaterial)
+                                    .clipShape(Circle())
+                            }
+
+                            // Aspect Ratio Button (kept where it was)
+                            Button { toggleAspectRatio() } label: {
+                                Text(currentAspectRatio.rawValue)
+                                    .font(.footnote.bold())
+                                    .foregroundColor(.white)
+                                    .padding(10)
+                                    .background(.ultraThinMaterial)
+                                    .clipShape(Capsule())
+                                    .overlay(
+                                        Capsule().stroke(
+                                            Color.yellow,
+                                            lineWidth: currentAspectRatio != .fourThree ? 1 : 0
+                                        )
+                                    )
+                            }
                         }
-                        .padding(.top, 2)
+                        // ✅ notch-safe top padding (iOS 16+)
+                        .padding(.top, topSafe + 8)
+                        .padding(.horizontal)
+
+                        // --- SETTINGS PANEL (Liquid Glass) ---
+                        if showSettings {
+                            VStack(spacing: 14) {
+                                // Toggles row 1
+                                HStack(spacing: 12) {
+                                    ToggleButton(icon: "grid", label: "Grid", isOn: $isGridEnabled)
+                                    ToggleButton(icon: "timer", label: "3s Timer", isOn: $isTimerEnabled)
+                                }
+
+                                // Toggles row 2
+                                HStack(spacing: 12) {
+                                    ToggleButton(icon: "scope", label: "Lock", isOn: $isLandmarkLockEnabled)
+                                        .onChange(of: isLandmarkLockEnabled) { _, on in
+                                            if !on {
+                                                withAnimation { currentAdvice = nil }
+                                            } else {
+                                                updateNavigationLogic(force: true)
+                                            }
+                                        }
+
+                                    ToggleButton(icon: "sparkles", label: "AI", isOn: $cameraManager.isAIFeaturesEnabled)
+                                }
+
+                                // Exposure
+                                HStack {
+                                    Image(systemName: "sun.max.fill")
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                    Slider(value: $exposureValue, in: -2...2)
+                                        .tint(.yellow)
+                                        .onChange(of: exposureValue) { _, val in
+                                            cameraManager.setExposure(ev: val)
+                                        }
+                                    Text(String(format: "%.1f", exposureValue))
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundColor(.white)
+                                        .frame(width: 34)
+                                }
+
+                                // WB
+                                if cameraManager.isWBSupported {
+                                    HStack {
+                                        Image(systemName: "thermometer")
+                                            .font(.caption)
+                                            .foregroundColor(.white)
+                                        Slider(value: $whiteBalanceValue, in: 3000...8000)
+                                            .tint(.orange)
+                                            .onChange(of: whiteBalanceValue) { _, val in
+                                                cameraManager.setWhiteBalance(kelvin: val)
+                                            }
+                                        Text("\(Int(whiteBalanceValue))K")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundColor(.white)
+                                            .frame(width: 55)
+                                    }
+                                }
+
+                                // Focus
+                                if cameraManager.isFocusSupported {
+                                    HStack {
+                                        Image(systemName: "flower")
+                                            .font(.caption)
+                                            .foregroundColor(.white)
+                                        Slider(value: $focusValue, in: 0.0...1.0)
+                                            .tint(.cyan)
+                                            .onChange(of: focusValue) { _, val in
+                                                cameraManager.setLensPosition(val)
+                                            }
+                                        Image(systemName: "mountain.2")
+                                            .font(.caption)
+                                            .foregroundColor(.white)
+                                    }
+                                }
+
+                                // Torch
+                                if cameraManager.isTorchSupported {
+                                    HStack {
+                                        Image(systemName: "bolt.slash.fill")
+                                            .font(.caption)
+                                            .foregroundColor(.white)
+                                        Slider(value: $torchValue, in: 0.0...1.0)
+                                            .tint(.white)
+                                            .onChange(of: torchValue) { _, val in
+                                                cameraManager.setTorchLevel(val)
+                                            }
+                                        Image(systemName: "bolt.fill")
+                                            .font(.caption)
+                                            .foregroundColor(.yellow)
+                                    }
+                                }
+
+                                // Reset
+                                Button("Reset All") {
+                                    exposureValue = 0
+                                    whiteBalanceValue = 5500
+                                    focusValue = 0.5
+                                    torchValue = 0.0
+                                    cameraManager.resetSettings()
+                                }
+                                .font(.caption.bold())
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.yellow)
+                                .cornerRadius(8)
+                            }
+                            .padding(14)
+                            .background(
+                                .ultraThinMaterial,
+                                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                            )
+                            .shadow(color: Color.black.opacity(0.25), radius: 14, x: 0, y: 6)
+                            .padding(.horizontal)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
 
                         Spacer()
 
-                        // Settings Button (same position)
-                        Button { withAnimation { showSettings.toggle() } } label: {
-                            Image(systemName: "slider.horizontal.3")
-                                .font(.headline)
-                                .foregroundColor(showSettings ? .yellow : .white)
-                                .padding(10)
-                                .background(.ultraThinMaterial)
-                                .clipShape(Circle())
+                        // Scope view only when lock enabled
+                        if isLandmarkLockEnabled, let advice = currentAdvice {
+                            ScopeView(advice: advice)
+                                .padding(.bottom, 10)
                         }
 
-                        // Aspect Ratio Button (same position)
-                        Button { toggleAspectRatio() } label: {
-                            Text(currentAspectRatio.rawValue)
-                                .font(.footnote.bold())
-                                .foregroundColor(.white)
-                                .padding(10)
-                                .background(.ultraThinMaterial)
-                                .clipShape(Capsule())
-                                .overlay(
-                                    Capsule().stroke(
-                                        Color.yellow,
-                                        lineWidth: currentAspectRatio != .fourThree ? 1 : 0
+                        // --- ZOOM CONTROLS (Only if multiple lenses / Back Camera) ---
+                        if cameraManager.zoomButtons.count > 1 {
+                            ZStack(alignment: .bottom) {
+                                if isZoomDialVisible {
+                                    ArcZoomDial(
+                                        currentZoom: cameraManager.currentZoomFactor,
+                                        minZoom: cameraManager.minZoomFactor,
+                                        maxZoom: cameraManager.maxZoomFactor,
+                                        presets: cameraManager.zoomButtons
                                     )
-                                )
-                        }
-                    }
-                    .padding(.top, 50)
-                    .padding(.horizontal)
+                                    .transition(.opacity)
+                                    .zIndex(1)
+                                }
 
-                    // --- SETTINGS PANEL ---
-                    if showSettings {
-                        VStack(spacing: 14) {
-                            // Toggles row 1
-                            HStack(spacing: 12) {
-                                ToggleButton(icon: "grid", label: "Grid", isOn: $isGridEnabled)
-                                ToggleButton(icon: "timer", label: "3s Timer", isOn: $isTimerEnabled)
-                            }
-
-                            // Toggles row 2 (NEW)
-                            HStack(spacing: 12) {
-                                ToggleButton(icon: "scope", label: "Lock", isOn: $isLandmarkLockEnabled)
-                                    .onChange(of: isLandmarkLockEnabled) { _, on in
-                                        if !on {
-                                            // stop showing guidance immediately
-                                            withAnimation { currentAdvice = nil }
-                                        } else {
-                                            // compute once immediately
-                                            updateNavigationLogic(force: true)
+                                if !isZoomDialVisible {
+                                    HStack(spacing: 20) {
+                                        ForEach(cameraManager.zoomButtons, id: \.self) { preset in
+                                            ZoomBubble(
+                                                label: preset == 0.5 ? ".5" : String(format: "%.0f", preset),
+                                                isSelected: abs(cameraManager.currentZoomFactor - preset) < 0.1
+                                            )
+                                            .onTapGesture { withAnimation { cameraManager.setZoomSmooth(preset) } }
                                         }
                                     }
-
-                                ToggleButton(icon: "sparkles", label: "AI", isOn: $cameraManager.isAIFeaturesEnabled)
+                                    .padding(.bottom, 20)
+                                    .transition(.opacity)
+                                    .zIndex(2)
+                                }
                             }
-
-                            // Exposure
-                            HStack {
-                                Image(systemName: "sun.max.fill")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
-                                Slider(value: $exposureValue, in: -2...2)
-                                    .tint(.yellow)
-                                    .onChange(of: exposureValue) { _, val in
-                                        cameraManager.setExposure(ev: val)
+                            .frame(height: 100)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        if !isZoomDialVisible {
+                                            withAnimation { isZoomDialVisible = true }
+                                            startZoomValue = cameraManager.currentZoomFactor
+                                        }
+                                        let delta = -value.translation.width / 150.0
+                                        let rawZoom = startZoomValue * pow(2, delta)
+                                        let clamped = max(cameraManager.minZoomFactor, min(cameraManager.maxZoomFactor, rawZoom))
+                                        cameraManager.setZoomInstant(clamped)
                                     }
-                                Text(String(format: "%.1f", exposureValue))
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundColor(.white)
-                                    .frame(width: 34)
-                            }
-
-                            // WB
-                            if cameraManager.isWBSupported {
-                                HStack {
-                                    Image(systemName: "thermometer")
-                                        .font(.caption)
-                                        .foregroundColor(.white)
-                                    Slider(value: $whiteBalanceValue, in: 3000...8000)
-                                        .tint(.orange)
-                                        .onChange(of: whiteBalanceValue) { _, val in
-                                            cameraManager.setWhiteBalance(kelvin: val)
-                                        }
-                                    Text("\(Int(whiteBalanceValue))K")
-                                        .font(.caption.monospacedDigit())
-                                        .foregroundColor(.white)
-                                        .frame(width: 55)
-                                }
-                            }
-
-                            // Focus
-                            if cameraManager.isFocusSupported {
-                                HStack {
-                                    Image(systemName: "flower")
-                                        .font(.caption)
-                                        .foregroundColor(.white)
-                                    Slider(value: $focusValue, in: 0.0...1.0)
-                                        .tint(.cyan)
-                                        .onChange(of: focusValue) { _, val in
-                                            cameraManager.setLensPosition(val)
-                                        }
-                                    Image(systemName: "mountain.2")
-                                        .font(.caption)
-                                        .foregroundColor(.white)
-                                }
-                            }
-
-                            // Torch
-                            if cameraManager.isTorchSupported {
-                                HStack {
-                                    Image(systemName: "bolt.slash.fill")
-                                        .font(.caption)
-                                        .foregroundColor(.white)
-                                    Slider(value: $torchValue, in: 0.0...1.0)
-                                        .tint(.white)
-                                        .onChange(of: torchValue) { _, val in
-                                            cameraManager.setTorchLevel(val)
-                                        }
-                                    Image(systemName: "bolt.fill")
-                                        .font(.caption)
-                                        .foregroundColor(.yellow)
-                                }
-                            }
-
-                            // Reset
-                            Button("Reset All") {
-                                exposureValue = 0
-                                whiteBalanceValue = 5500
-                                focusValue = 0.5
-                                torchValue = 0.0
-                                cameraManager.resetSettings()
-                            }
-                            .font(.caption.bold())
-                            .foregroundColor(.black)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.yellow)
-                            .cornerRadius(8)
-                        }
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(15)
-                        .padding(.horizontal)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-
-                    Spacer()
-
-                    // Scope view only when lock enabled
-                    if isLandmarkLockEnabled, let advice = currentAdvice {
-                        ScopeView(advice: advice)
-                            .padding(.bottom, 10)
-                    }
-
-                    // --- ZOOM CONTROLS (Only if multiple lenses / Back Camera) ---
-                    if cameraManager.zoomButtons.count > 1 {
-                        ZStack(alignment: .bottom) {
-                            if isZoomDialVisible {
-                                ArcZoomDial(
-                                    currentZoom: cameraManager.currentZoomFactor,
-                                    minZoom: cameraManager.minZoomFactor,
-                                    maxZoom: cameraManager.maxZoomFactor,
-                                    presets: cameraManager.zoomButtons
-                                )
-                                .transition(.opacity)
-                                .zIndex(1)
-                            }
-
-                            if !isZoomDialVisible {
-                                HStack(spacing: 20) {
-                                    ForEach(cameraManager.zoomButtons, id: \.self) { preset in
-                                        ZoomBubble(
-                                            label: preset == 0.5 ? ".5" : String(format: "%.0f", preset),
-                                            isSelected: abs(cameraManager.currentZoomFactor - preset) < 0.1
-                                        )
-                                        .onTapGesture { withAnimation { cameraManager.setZoomSmooth(preset) } }
-                                    }
-                                }
-                                .padding(.bottom, 20)
-                                .transition(.opacity)
-                                .zIndex(2)
-                            }
-                        }
-                        .frame(height: 100)
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { value in
-                                    if !isZoomDialVisible {
-                                        withAnimation { isZoomDialVisible = true }
+                                    .onEnded { _ in
                                         startZoomValue = cameraManager.currentZoomFactor
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                            withAnimation { isZoomDialVisible = false }
+                                        }
                                     }
-                                    let delta = -value.translation.width / 150.0
-                                    let rawZoom = startZoomValue * pow(2, delta)
-                                    let clamped = max(cameraManager.minZoomFactor, min(cameraManager.maxZoomFactor, rawZoom))
-                                    cameraManager.setZoomInstant(clamped)
-                                }
-                                .onEnded { _ in
-                                    startZoomValue = cameraManager.currentZoomFactor
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                                        withAnimation { isZoomDialVisible = false }
-                                    }
-                                }
-                        )
-                    } else {
-                        Color.clear.frame(height: 100)
-                    }
+                            )
+                        } else {
+                            Color.clear.frame(height: 100)
+                        }
 
-                    // --- BOTTOM BAR (Apple style) ---
-                    HStack {
-                        // ✅ Album (bottom-left)
-                        Button { showPhotoReview = true } label: {
-                            if let image = cameraManager.capturedImage {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 52, height: 52)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(Color.white, lineWidth: 2)
-                                    )
-                                    .scaleEffect(thumbnailScale)
-                            } else {
-                                Image(systemName: "photo.stack")
+                        // --- BOTTOM BAR (Apple style) ---
+                        HStack {
+                            // Album (bottom-left)
+                            Button { showPhotoReview = true } label: {
+                                if let image = cameraManager.capturedImage {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 52, height: 52)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .stroke(Color.white, lineWidth: 2)
+                                        )
+                                        .scaleEffect(thumbnailScale)
+                                } else {
+                                    Image(systemName: "photo.stack")
+                                        .font(.title3)
+                                        .foregroundColor(.white)
+                                        .frame(width: 52, height: 52)
+                                        .background(.ultraThinMaterial)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+                            }
+
+                            Spacer()
+
+                            // Shutter (center)
+                            Button { takePhoto() } label: {
+                                ZStack {
+                                    Circle()
+                                        .stroke(.white, lineWidth: 4)
+                                        .frame(width: 78, height: 78)
+
+                                    Circle()
+                                        .fill(.white)
+                                        .frame(width: 66, height: 66)
+                                        .scaleEffect(isCapturing ? 0.85 : 1.0)
+                                }
+                            }
+
+                            Spacer()
+
+                            // Flip (bottom-right)
+                            Button { cameraManager.switchCamera() } label: {
+                                Image(systemName: "arrow.triangle.2.circlepath")
                                     .font(.title3)
                                     .foregroundColor(.white)
                                     .frame(width: 52, height: 52)
                                     .background(.ultraThinMaterial)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    .clipShape(Circle())
                             }
                         }
-
-                        Spacer()
-
-                        // ✅ Shutter (center)
-                        Button { takePhoto() } label: {
-                            ZStack {
-                                Circle()
-                                    .stroke(.white, lineWidth: 4)
-                                    .frame(width: 78, height: 78)
-
-                                Circle()
-                                    .fill(.white)
-                                    .frame(width: 66, height: 66)
-                                    .scaleEffect(isCapturing ? 0.85 : 1.0)
-                            }
-                        }
-
-                        Spacer()
-
-                        // ✅ Flip (bottom-right)
-                        Button { cameraManager.switchCamera() } label: {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.title3)
-                                .foregroundColor(.white)
-                                .frame(width: 52, height: 52)
-                                .background(.ultraThinMaterial)
-                                .clipShape(Circle())
-                        }
+                        .padding(.horizontal, 36)
+                        .padding(.bottom, 40)
                     }
-                    .padding(.horizontal, 36)
-                    .padding(.bottom, 40)
-                }
+                    .ignoresSafeArea(edges: .top)
 
-                // --- FULL SCREEN OVERLAYS ---
-                if showFlashAnimation {
-                    Color.white.ignoresSafeArea().transition(.opacity).zIndex(100)
-                }
+                    // Full screen overlays
+                    if showFlashAnimation {
+                        Color.white.ignoresSafeArea().transition(.opacity).zIndex(100)
+                    }
 
-                if cameraManager.isTimerRunning {
-                    Color.black.opacity(0.4).ignoresSafeArea()
-                    Text("\(cameraManager.timerCount)")
-                        .font(.system(size: 100, weight: .bold))
-                        .foregroundColor(.white)
-                        .transition(.scale.combined(with: .opacity))
-                        .zIndex(200)
+                    if cameraManager.isTimerRunning {
+                        Color.black.opacity(0.4).ignoresSafeArea()
+                        Text("\(cameraManager.timerCount)")
+                            .font(.system(size: 100, weight: .bold))
+                            .foregroundColor(.white)
+                            .transition(.scale.combined(with: .opacity))
+                            .zIndex(200)
+                    }
                 }
-            }
-            .navigationDestination(isPresented: $showMap) {
-                MapScreen(locationManager: locationManager, landmark: targetLandmarkBinding)
-            }
-            .sheet(isPresented: $showPhotoReview) {
-                PhotoReviewView()
-            }
-            .onReceive(locationManager.$heading) { _ in
-                updateNavigationLogic(force: false)
-            }
-            .onReceive(locationManager.$location) { _ in
-                updateNavigationLogic(force: false)
-            }
-            .onReceive(cameraManager.captureDidFinish) { _ in
-                withAnimation(.easeInOut(duration: 0.1)) { isCapturing = false }
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) { thumbnailScale = 1.2 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    withAnimation { thumbnailScale = 1.0 }
+                .navigationDestination(isPresented: $showMap) {
+                    MapScreen(locationManager: locationManager, landmark: targetLandmarkBinding)
                 }
-            }
-            .onAppear {
-                // compute once at launch if lock enabled
-                updateNavigationLogic(force: true)
+                .sheet(isPresented: $showPhotoReview) {
+                    PhotoReviewView()
+                }
+                .onReceive(locationManager.$heading) { _ in
+                    updateNavigationLogic(force: false)
+                }
+                .onReceive(locationManager.$location) { _ in
+                    updateNavigationLogic(force: false)
+                }
+                .onReceive(cameraManager.captureDidFinish) { _ in
+                    withAnimation(.easeInOut(duration: 0.1)) { isCapturing = false }
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) { thumbnailScale = 1.2 }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation { thumbnailScale = 1.0 }
+                    }
+                }
+                .onAppear {
+                    updateNavigationLogic(force: true)
+                }
             }
         }
     }

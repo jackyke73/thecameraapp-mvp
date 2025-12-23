@@ -176,9 +176,9 @@
 			isa = PBXGroup;
 			children = (
 				EA93315A2ECEB76F00AD97A9 /* BoyfriendCamera.app */,
+				EAF978732EF934CE00B221C1 /* CNNEmotions_2.mlmodel */,
 				EA9331672ECEB77100AD97A9 /* BoyfriendCameraTests.xctest */,
 				EA9331712ECEB77100AD97A9 /* BoyfriendCameraUITests.xctest */,
-				EAF978732EF934CE00B221C1 /* CNNEmotions_2.mlmodel */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -631,7 +631,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				COPY_HEADERS_RUN_UNIFDEF = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = M4M3QTWS6N;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -657,7 +656,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				COPY_HEADERS_RUN_UNIFDEF = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = M4M3QTWS6N;
 				GENERATE_INFOPLIST_FILE = YES;

@@ -37,7 +37,7 @@ struct AIDebugHUD: View {
         }
         .foregroundColor(.white)
         .padding(10)
-        // Liquid Glass style (matches your app's ultraThinMaterial look)
+        // ✅ Liquid Glass
         .background(
             .ultraThinMaterial,
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -47,5 +47,7 @@ struct AIDebugHUD: View {
                 .stroke(Color.white.opacity(0.22), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.25), radius: 10, x: 0, y: 4)
+        // ✅ Do not block taps / sheets
+        .allowsHitTesting(false)
     }
 }
