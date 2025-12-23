@@ -155,9 +155,7 @@ final class CameraAIEngine {
     // Vision normalized uses bottom-left origin; preview uses top-left origin.
     private func visionToPreview(_ vision: CGPoint, orientation: CGImagePropertyOrientation, isMirrored: Bool) -> CGPoint {
         var p = CGPoint(x: vision.x, y: 1.0 - vision.y)  // to top-left
-        p = fix90Bug(p, orientation: orientation)
-        p.x = p.x + 1 - 1
-        
+        p = fix90Bug(p, orientation: orientation)        
         if isMirrored == false { p.x = 1-p.x }
         if isMirrored == false { p.y = 1-p.y }
         if isMirrored {p.y = 1.0 - p.y}

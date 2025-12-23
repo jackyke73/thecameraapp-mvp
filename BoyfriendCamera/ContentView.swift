@@ -89,8 +89,7 @@ struct ContentView: View {
                     ZStack {
                         ZStack {
                             // ✅ IMPORTANT:
-                            // Your current CameraPreview only has (cameraManager, onUserInteraction).
-                            // Remove onPreviewSizeChange to avoid “Extra argument … in call”.
+                            // Your CameraPreview only has (cameraManager, onUserInteraction).
                             CameraPreview(
                                 cameraManager: cameraManager,
                                 onUserInteraction: {
@@ -138,7 +137,7 @@ struct ContentView: View {
                     HStack {
                         AIDebugHUD(cameraManager: cameraManager)
                             .padding(.leading, 14)
-                            .padding(.top, 80)
+                            .padding(.top, 132)
                         Spacer()
                     }
                     Spacer()
@@ -154,7 +153,8 @@ struct ContentView: View {
                 // 4) UI CONTROLS
                 VStack {
                     // --- TOP BAR ---
-                    HStack {
+                    HStack(alignment: .top) {
+                        // Map button (left)
                         Button { showMap = true } label: {
                             Image(systemName: "map.fill")
                                 .font(.headline)
@@ -164,21 +164,48 @@ struct ContentView: View {
                                 .clipShape(Circle())
                         }
 
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(locationManager.permissionGranted ? Color.green : Color.red)
-                                .frame(width: 6, height: 6)
-                            Text(locationManager.permissionGranted ? "GPS" : "NO GPS")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white)
+                        // GPS + AI ON/OFF stacked (right below GPS)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(locationManager.permissionGranted ? Color.green : Color.red)
+                                    .frame(width: 6, height: 6)
+                                Text(locationManager.permissionGranted ? "GPS" : "NO GPS")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.black.opacity(0.4))
+                            .cornerRadius(12)
+
+                            Button {
+                                cameraManager.isAIFeaturesEnabled.toggle()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(cameraManager.isAIFeaturesEnabled ? Color.green : Color.gray)
+                                        .frame(width: 6, height: 6)
+                                    Text(cameraManager.isAIFeaturesEnabled ? "AI ON" : "AI OFF")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.black.opacity(0.4))
+                                .cornerRadius(12)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.black.opacity(0.4))
-                        .cornerRadius(12)
+                        .padding(.top, 2)
 
                         Spacer()
 
+                        // Settings Button
                         Button { withAnimation { showSettings.toggle() } } label: {
                             Image(systemName: "slider.horizontal.3")
                                 .font(.headline)
@@ -188,6 +215,7 @@ struct ContentView: View {
                                 .clipShape(Circle())
                         }
 
+                        // Aspect Ratio Button
                         Button { toggleAspectRatio() } label: {
                             Text(currentAspectRatio.rawValue)
                                 .font(.footnote.bold())
@@ -435,7 +463,9 @@ struct ContentView: View {
 
                 // --- FULL SCREEN OVERLAYS ---
                 if showFlashAnimation {
-                    Color.white.ignoresSafeArea().transition(.opacity).zIndex(100)
+                    Color.white.ignoresSafeArea()
+                        .transition(.opacity)
+                        .zIndex(100)
                 }
 
                 if cameraManager.isTimerRunning {
@@ -557,6 +587,7 @@ struct ToggleButton: View {
             .background(isOn ? Color.yellow : Color.black.opacity(0.5))
             .cornerRadius(10)
         }
+        .buttonStyle(.plain)
     }
 }
 
