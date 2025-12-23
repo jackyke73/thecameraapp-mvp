@@ -37,7 +37,15 @@ struct AIDebugHUD: View {
         }
         .foregroundColor(.white)
         .padding(10)
-        .background(Color.black.opacity(0.55))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        // Liquid Glass style (matches your app's ultraThinMaterial look)
+        .background(
+            .ultraThinMaterial,
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.22), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.25), radius: 10, x: 0, y: 4)
     }
 }
